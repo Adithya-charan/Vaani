@@ -36,6 +36,9 @@ _FIND_IN_FOLDER = re.compile(
 )
 _NOISE_WORDS = {"file", "files", "document", "documents", "my", "the", "a"}
 _NEWEST_WORDS = {"latest", "newest", "recent", "most", "last"}
+# "find it" names nothing; searching for "it" would match half the disk ("Adithya", "edit"...).
+_VAGUE_WORDS = {"it", "that", "this", "them", "those", "these", "something", "anything", "everything",
+                "stuff", "thing", "things", "one", "some", "all", "any"}
 _EXTENSIONS = {"pdf", "doc", "docx", "txt", "xls", "xlsx", "csv", "ppt", "pptx", "jpg", "jpeg",
                "png", "mp3", "mp4", "zip", "java", "py"}
 
@@ -75,6 +78,8 @@ def parse_command(text: str) -> dict[str, Any] | None:
                 plan["extension"] = word
             elif word not in _NOISE_WORDS:
                 words.append(word)
+        if "extension" not in plan and all(w in _VAGUE_WORDS or len(w) < 2 for w in words):
+            return None  # too vague for a rule; the planner can ask what to look for
         plan["query"] = " ".join(words)
         if match.group("folder"):
             plan["folder"] = match.group("folder")

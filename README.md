@@ -37,6 +37,23 @@ Response: `{request_id, status, action, message, data, planner}` where `status` 
 
 Allowlisted actions: `open_calculator`, `open_notepad`, `open_explorer`, `find_file`, `get_status`.
 
+### AI planner hardening
+- Plans are validated in strict mode: no extra keys, no type coercion, exact action names.
+- `find_file` queries may contain letters in any script but never path separators, drive colons,
+  wildcards, `..` or control characters; at least 2 characters unless an extension is given.
+- Clarifying questions are stripped of control characters before being shown or spoken.
+- The prompt treats the user's words as data (prompt-injection attempts get a clarification), accepts
+  English/Hindi/Telugu/mixed input and returns Latin-script search keywords.
+- Groq's free tier is ~8k tokens/min; a short `retry-after` (≤5 s) is retried once, otherwise the
+  phone is told AI planning is rate-limited while basic commands keep working.
+
+Live evaluation against the real model (33 cases: EN/HI/TE, ambiguous, malicious, malformed; nothing
+is executed). Opt-in because it uses API quota:
+
+```powershell
+$env:VAANI_LIVE_TESTS='1'; .venv\Scripts\python.exe -m pytest tests/test_planner_live.py -v
+```
+
 ### Security notes
 - `.env` is git-ignored. Keys live only on the laptop, never in the APK.
 - Default bind is `127.0.0.1`. For phone testing set `VAANI_HOST` to the laptop's Tailscale
