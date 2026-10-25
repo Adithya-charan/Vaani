@@ -1,0 +1,19 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/laptop-agent/.venv/Scripts/python.exe",
+  "python.testing.pytestEnabled": true,
+  "python.testing.cwd": "${workspaceFolder}/laptop-agent",
+  "python.testing.pytestArgs": ["tests"],
+  "terminal.integrated.env.windows": {
+    "JAVA_HOME": "C:\\Program Files\\Java\\jdk-25",
+    "ANDROID_HOME": "E:\\Android\\Sdk",
+    "GRADLE_USER_HOME": "E:\\Android\\.gradle",
+    "PATH": "E:\\Android\\Sdk\\platform-tools;${env:PATH}"
+  },
+  "java.import.gradle.java.home": "C:\\Program Files\\Java\\jdk-25",
+  "files.exclude": {
+    "**/.gradle": true,
+    "**/build": true,
+    "**/__pycache__": true,
+    "**/.pytest_cache": true
+  }
+}

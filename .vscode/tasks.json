@@ -1,0 +1,62 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Android: build debug APK",
+      "type": "shell",
+      "command": ".\\gradlew.bat assembleDebug",
+      "options": { "cwd": "${workspaceFolder}/android-app" },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: install on phone",
+      "type": "shell",
+      "command": ".\\gradlew.bat installDebug; adb shell am start -n com.vaani.app/.MainActivity",
+      "options": { "cwd": "${workspaceFolder}/android-app" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: connect over Wi-Fi",
+      "type": "shell",
+      "command": "adb connect ${input:phoneAddress}; adb devices -l",
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: list devices",
+      "type": "shell",
+      "command": "adb devices -l",
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: logcat (Vaani)",
+      "type": "shell",
+      "command": "adb logcat --pid=$(adb shell pidof -s com.vaani.app)",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Agent: run server",
+      "type": "shell",
+      "command": ".\\.venv\\Scripts\\python.exe -m app",
+      "options": { "cwd": "${workspaceFolder}/laptop-agent" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Agent: run tests",
+      "type": "shell",
+      "command": ".\\.venv\\Scripts\\python.exe -m pytest",
+      "options": { "cwd": "${workspaceFolder}/laptop-agent" },
+      "group": "test",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "phoneAddress",
+      "type": "promptString",
+      "description": "Phone IP:port from Developer options > Wireless debugging (main screen, not the pairing popup)"
+    }
+  ]
+}

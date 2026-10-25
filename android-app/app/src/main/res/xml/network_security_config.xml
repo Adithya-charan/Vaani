@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The laptop agent is reached by IP on the home network or Tailscale, so cleartext
+  cannot be limited by domain here. AgentEndpoint enforces the real rule in code:
+  http is only accepted for private, Tailscale and loopback addresses.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
