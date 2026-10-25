@@ -14,6 +14,21 @@ copy .env.example .env    # then set VAANI_AUTH_TOKEN (and optional GROQ/SARVAM 
 .venv\Scripts\python.exe -m pytest       # tests
 ```
 
+### Running in the background
+`app.supervisor` runs the agent without a console window, restarts it if it crashes or stops
+answering `/health`, and restarts it when a `VAANI_HOST` address appears or disappears (Tailscale
+connecting after login, Wi-Fi change, waking from sleep). Only one supervisor runs at a time.
+
+```powershell
+.\scripts\vaani.ps1 enable-autostart   # start at Windows login (Startup-folder shortcut, current user)
+.\scripts\vaani.ps1 start | stop | restart | status | logs
+.\scripts\vaani.ps1 disable-autostart
+```
+
+Logs: `%LOCALAPPDATA%\Vaani\logs\supervisor.log` and `agent.log` (rotated). VS Code tasks
+"Agent: background start/stop", "Agent: status" and "Agent: follow logs" wrap the same script.
+"Agent: run server" stops the background copy first and runs the agent in the terminal.
+
 ### API
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
@@ -95,6 +110,19 @@ private/LAN, Tailscale (100.64.0.0/10) and loopback addresses; others require ht
 If the laptop's IP changes (DHCP), update both `VAANI_HOST` and the app setting.
 
 ## Known limitations
-- Laptop must be awake, online, and running the agent.
-- GUI actions fail if the desktop is locked.
-- Locked-screen / background voice is out of scope for v1.
+- **Sleep:** the phone cannot wake a sleeping laptop. While it sleeps the app shows Disconnected and
+  re-checks every 5–30 s while on screen, turning green on its own once the laptop is back. To keep
+  Vaani reachable, set Windows *Power > Screen and sleep* to never sleep when plugged in (a choice
+  left to you; Vaani does not change power settings). Wake-on-LAN is not implemented.
+- **Login required:** the agent starts at *user login*, not at boot; after a restart someone has to
+  sign in to Windows once.
+- **Locked desktop:** commands still run, but windows opened while the desktop is locked appear
+  behind the lock screen.
+- **Network:** home Wi-Fi traffic to the agent is plain HTTP; use the Tailscale address (encrypted)
+  for everything. Groq's free tier allows ~8k tokens/minute, so bursts of AI-planned commands can
+  briefly report "rate-limited"; rule-based commands are unaffected.
+- **Voice:** needs the laptop (Sarvam is called from it); there is no phone-only speech-recognition
+  fallback yet. Replies are spoken in English (en-IN). Recording is tap-to-start/tap-to-send,
+  up to 30 s, only while the app is open; locked-screen or wake-word listening is not supported.
+- **Actions:** only Calculator, Notepad, File Explorer, file search and status. Opening, sending or
+  deleting files is deliberately not available.

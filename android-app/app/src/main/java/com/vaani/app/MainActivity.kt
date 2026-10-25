@@ -8,6 +8,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.vaani.app.data.SharedVoicePrefs
 import com.vaani.app.speech.AndroidReplySpeaker
 import com.vaani.app.speech.AndroidVoiceRecorder
@@ -50,6 +52,8 @@ class MainActivity : ComponentActivity() {
                         prefs = SharedVoicePrefs(applicationContext),
                     )
                 )
+                LifecycleEventEffect(Lifecycle.Event.ON_START) { home.onForeground() }
+                LifecycleEventEffect(Lifecycle.Event.ON_STOP) { home.onBackground() }
                 val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
                     if (granted) home.onMicClick()
                     else home.onMicPermissionDenied(

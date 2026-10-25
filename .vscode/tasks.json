@@ -38,7 +38,36 @@
     {
       "label": "Agent: run server",
       "type": "shell",
-      "command": ".\\.venv\\Scripts\\python.exe -m app",
+      "command": ".\\scripts\\vaani.ps1 stop; .\\.venv\\Scripts\\python.exe -m app",
+      "options": { "cwd": "${workspaceFolder}/laptop-agent" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Agent: background start",
+      "type": "shell",
+      "command": ".\\scripts\\vaani.ps1 start",
+      "options": { "cwd": "${workspaceFolder}/laptop-agent" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Agent: background stop",
+      "type": "shell",
+      "command": ".\\scripts\\vaani.ps1 stop",
+      "options": { "cwd": "${workspaceFolder}/laptop-agent" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Agent: status",
+      "type": "shell",
+      "command": ".\\scripts\\vaani.ps1 status",
+      "options": { "cwd": "${workspaceFolder}/laptop-agent" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Agent: follow logs",
+      "type": "shell",
+      "command": ".\\scripts\\vaani.ps1 logs",
       "options": { "cwd": "${workspaceFolder}/laptop-agent" },
       "isBackground": true,
       "problemMatcher": []

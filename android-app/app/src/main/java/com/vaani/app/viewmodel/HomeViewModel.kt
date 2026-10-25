@@ -28,6 +28,15 @@ import kotlinx.coroutines.launch
 const val MAX_COMMAND_LENGTH = 500
 private const val MAX_EXCHANGES = 50
 const val MIN_RECORDING_MS = 600L
+const val RECONNECT_MIN_MS = 5_000L
+const val RECONNECT_MAX_MS = 30_000L
+const val HEARTBEAT_MS = 30_000L
+
+/** Worth retrying on its own; a missing setup or wrong token needs the user. */
+fun AgentError.isTransient(): Boolean = when (this) {
+    AgentError.Unreachable, AgentError.Timeout, is AgentError.Server -> true
+    AgentError.NotConfigured, AgentError.Unauthorized -> false
+}
 
 sealed interface ConnectionState {
     data object Checking : ConnectionState
@@ -78,6 +87,7 @@ class HomeViewModel(
     private var sendJob: Job? = null
     private var voiceJob: Job? = null
     private var speakJob: Job? = null
+    private var watchJob: Job? = null
     private var nextId = 0L
 
     init {
@@ -93,6 +103,57 @@ class HomeViewModel(
             }
             _state.update { it.copy(connection = connection) }
         }
+    }
+
+    /**
+     * While the app is on screen, quietly re-check a laptop that went away (asleep, off
+     * Wi-Fi, agent restarting) so the status turns green again without the user tapping.
+     */
+    fun onForeground() {
+        if (_state.value.connection != ConnectionState.Checking) refreshConnection()
+        watchJob?.cancel()
+        watchJob = viewModelScope.launch {
+            var wait = RECONNECT_MIN_MS
+            while (true) {
+                when (val c = _state.value.connection) {
+                    // Heartbeat: notice a laptop that went to sleep while we showed "Connected".
+                    is ConnectionState.Connected -> {
+                        delay(HEARTBEAT_MS)
+                        if (_state.value.connection !is ConnectionState.Connected || _state.value.isBusy) continue
+                        val r = repository.checkStatus()
+                        if (r is AgentResult.Failed && r.error.isTransient() &&
+                            _state.value.connection is ConnectionState.Connected
+                        ) {
+                            _state.update { it.copy(connection = ConnectionState.Disconnected(r.error)) }
+                            wait = RECONNECT_MIN_MS
+                        }
+                    }
+                    is ConnectionState.Disconnected -> {
+                        if (!c.reason.isTransient()) {
+                            delay(RECONNECT_MIN_MS) // needs the user (settings); just watch for changes
+                            continue
+                        }
+                        delay(wait)
+                        if (_state.value.connection !is ConnectionState.Disconnected) continue
+                        when (val r = repository.checkStatus()) {
+                            is AgentResult.Ok -> {
+                                if (_state.value.connection is ConnectionState.Disconnected) {
+                                    _state.update { it.copy(connection = ConnectionState.Connected(r.value.hostname)) }
+                                }
+                                wait = RECONNECT_MIN_MS
+                            }
+                            is AgentResult.Failed -> wait = (wait * 2).coerceAtMost(RECONNECT_MAX_MS)
+                        }
+                    }
+                    ConnectionState.Checking -> delay(500)
+                }
+            }
+        }
+    }
+
+    fun onBackground() {
+        watchJob?.cancel()
+        watchJob = null
     }
 
     fun onInputChange(text: String) {
