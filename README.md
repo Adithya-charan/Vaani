@@ -62,6 +62,17 @@ APK output: `android-app/app/build/outputs/apk/debug/app-debug.apk`.
    (`C:\ProgramData\anaconda3\python.exe`), ideally only from `LocalSubnet`.
 3. In the app: ⚙ → address `192.168.0.7:8765`, token = `VAANI_AUTH_TOKEN` → Test connection → Save.
 
+### Away from home (Tailscale)
+1. Install Tailscale on the laptop and phone and sign in with the same account.
+2. Add the laptop's Tailscale IP (`tailscale ip -4`, e.g. `100.106.183.88`) to `VAANI_HOST`,
+   e.g. `VAANI_HOST=127.0.0.1,192.168.0.7,100.106.183.88`. Unavailable addresses are skipped.
+3. In the app, set the address to the Tailscale IP. It works on home Wi-Fi and mobile data and
+   does not change when the router hands out new Wi-Fi addresses.
+4. In the Tailscale admin console, disable key expiry for the laptop.
+
+The agent only answers clients on loopback, private LAN and Tailscale ranges
+(`VAANI_ALLOWED_CLIENTS`), before checking the token.
+
 The token is stored encrypted with an Android Keystore key. Plain http is accepted only for
 private/LAN, Tailscale (100.64.0.0/10) and loopback addresses; others require https.
 If the laptop's IP changes (DHCP), update both `VAANI_HOST` and the app setting.

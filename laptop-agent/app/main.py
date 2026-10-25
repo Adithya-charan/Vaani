@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import socket
 
 from fastapi import FastAPI
 
 from app.api.commands import router as commands_router
 from app.config import Settings, load_settings
+from app.security.network import ClientNetworkMiddleware
 from app.services.ai_planner import AIPlanner, GroqPlanner
 from app.services.command_executor import CommandExecutor, Launcher, default_launcher
 from app.services.file_search import FileSearcher
@@ -43,7 +45,26 @@ def create_app(
         return {"status": "ok", "service": "vaani-laptop-agent"}
 
     app.include_router(commands_router)
+    app.add_middleware(ClientNetworkMiddleware, allowed=settings.allowed_clients)
     return app
+
+
+def bind_sockets(hosts: tuple[str, ...], port: int, log: logging.Logger) -> list[socket.socket]:
+    """Bind one listening socket per address. Addresses that are not up (e.g. Tailscale
+    disconnected, laptop on another Wi-Fi) are skipped instead of stopping the agent."""
+    sockets = []
+    for host in hosts:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        try:
+            sock.bind((host, port))
+        except OSError as exc:
+            sock.close()
+            log.warning("Not listening on %s:%d (%s). Is that network connected?", host, port, exc.strerror or exc)
+            continue
+        sockets.append(sock)
+        log.info("Listening on %s:%d", host, port)
+    return sockets
 
 
 def run() -> None:
@@ -53,7 +74,8 @@ def run() -> None:
     settings = load_settings()
     log = logging.getLogger("vaani")
     log.info("Starting with %r", settings)
-    if settings.host not in ("127.0.0.1", "localhost", "::1"):
-        log.warning("Listening on %s. Make sure this is a private interface (Wi-Fi LAN or Tailscale) "
-                    "and that the Windows firewall limits who can reach port %d.", settings.host, settings.port)
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_level="info")
+    sockets = bind_sockets(settings.hosts, settings.port, log)
+    if not sockets:
+        raise SystemExit("Vaani agent could not listen on any address in VAANI_HOST.")
+    server = uvicorn.Server(uvicorn.Config(create_app(settings), log_level="info"))
+    server.run(sockets=sockets)

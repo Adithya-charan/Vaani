@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import sys
 from dataclasses import dataclass, field
@@ -17,12 +18,41 @@ class ConfigError(Exception):
     pass
 
 
+# Home networks, Tailscale (IPv4 CGNAT range and IPv6 ULA) and loopback.
+DEFAULT_ALLOWED_CLIENTS = (
+    "127.0.0.0/8", "::1/128",
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    "100.64.0.0/10", "fd7a:115c:a1e0::/48",
+)
+
+
+def parse_networks(raw: str | None) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    entries = [e.strip() for e in raw.split(",") if e.strip()] if raw else list(DEFAULT_ALLOWED_CLIENTS)
+    try:
+        return tuple(ipaddress.ip_network(e, strict=False) for e in entries)
+    except ValueError as exc:
+        raise ConfigError(f"Invalid VAANI_ALLOWED_CLIENTS entry: {exc}") from exc
+
+
+def parse_hosts(raw: str | None) -> tuple[str, ...]:
+    hosts = tuple(h.strip() for h in (raw or "127.0.0.1").split(",") if h.strip())
+    for h in hosts:
+        try:
+            ipaddress.ip_address(h)
+        except ValueError as exc:
+            raise ConfigError(f"VAANI_HOST entries must be IP addresses, got {h!r}") from exc
+    return hosts
+
+
 @dataclass(frozen=True)
 class Settings:
     auth_token: str
     approved_folders: dict[str, Path] = field(default_factory=dict)
-    host: str = "127.0.0.1"
+    hosts: tuple[str, ...] = ("127.0.0.1",)
     port: int = 8765
+    allowed_clients: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = field(
+        default_factory=lambda: parse_networks(None)
+    )
     enable_docs: bool = False
     groq_api_key: str | None = None
     groq_model: str = "qwen/qwen3.8-27b"
@@ -32,7 +62,7 @@ class Settings:
 
     def __repr__(self) -> str:  # never leak secrets through repr/logging
         return (
-            f"Settings(host={self.host!r}, port={self.port}, "
+            f"Settings(hosts={list(self.hosts)}, port={self.port}, "
             f"approved_folders={list(self.approved_folders)}, "
             f"groq={'set' if self.groq_api_key else 'unset'}, "
             f"sarvam={'set' if self.sarvam_api_key else 'unset'})"
@@ -118,8 +148,9 @@ def load_settings(env_file: Path | None = None) -> Settings:
     return Settings(
         auth_token=token,
         approved_folders=parse_approved_folders(os.getenv("VAANI_APPROVED_FOLDERS")),
-        host=os.getenv("VAANI_HOST", "127.0.0.1"),
+        hosts=parse_hosts(os.getenv("VAANI_HOST")),
         port=int(os.getenv("VAANI_PORT", "8765")),
+        allowed_clients=parse_networks(os.getenv("VAANI_ALLOWED_CLIENTS")),
         enable_docs=os.getenv("VAANI_ENABLE_DOCS", "").lower() in ("1", "true", "yes"),
         groq_api_key=os.getenv("GROQ_API_KEY") or None,
         groq_model=os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
