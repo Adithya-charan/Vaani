@@ -60,10 +60,10 @@ def launcher() -> RecordingLauncher:
 
 @pytest.fixture
 def make_client(roots, launcher):
-    def _make(planner=None, launcher_override=None, client_ip="192.168.0.5") -> TestClient:
+    def _make(planner=None, launcher_override=None, client_ip="192.168.0.5", voice=None) -> TestClient:
         settings = Settings(auth_token=TOKEN, approved_folders=roots)
         app = create_app(settings, launcher=launcher_override or launcher, planner=planner,
-                         use_configured_planner=False)
+                         use_configured_planner=False, voice=voice, use_configured_voice=False)
         return TestClient(app, client=(client_ip, 50000))
 
     return _make

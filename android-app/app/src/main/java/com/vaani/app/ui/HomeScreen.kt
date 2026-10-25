@@ -1,6 +1,12 @@
 package com.vaani.app.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.ui.graphics.graphicsLayer
+import com.vaani.app.viewmodel.VoiceState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -90,6 +96,8 @@ fun HomeScreen(
     onRefreshConnection: () -> Unit,
     onNoticeShown: () -> Unit,
     onOpenSettings: () -> Unit,
+    onToggleMute: () -> Unit = {},
+    micLevel: Float = 0f,
 ) {
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.notice) {
@@ -111,6 +119,13 @@ fun HomeScreen(
                 },
                 actions = {
                     ConnectionChip(state.connection, onRefreshConnection)
+                    IconButton(onClick = onToggleMute) {
+                        Icon(
+                            painterResource(if (state.muted) R.drawable.ic_volume_off else R.drawable.ic_volume_up),
+                            contentDescription = if (state.muted) "Spoken replies off. Tap to turn on." else "Spoken replies on. Tap to mute.",
+                            tint = if (state.speaking) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                        )
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(painterResource(R.drawable.ic_settings), contentDescription = "Laptop connection settings")
                     }
@@ -125,7 +140,7 @@ fun HomeScreen(
                 .padding(padding)
                 .imePadding()
         ) {
-            if (state.isSending) {
+            if (state.isSending || state.voice == VoiceState.Transcribing) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             } else {
                 Spacer(Modifier.size(4.dp))
@@ -136,10 +151,10 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(QUICK_COMMANDS) { cmd ->
-                    AssistChip(onClick = { onQuickCommand(cmd) }, label = { Text(cmd) }, enabled = !state.isSending)
+                    AssistChip(onClick = { onQuickCommand(cmd) }, label = { Text(cmd) }, enabled = !state.isBusy)
                 }
             }
-            CommandBar(state, onInputChange, onSend, onCancel, onMicClick)
+            CommandBar(state, micLevel, onInputChange, onSend, onCancel, onMicClick)
         }
     }
 }
@@ -220,11 +235,21 @@ private fun ExchangeItem(exchange: Exchange) {
             shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
             modifier = Modifier.align(Alignment.End).widthIn(max = 320.dp),
         ) {
-            Text(
-                exchange.command,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            )
+            Row(
+                Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (exchange.viaVoice) {
+                    Icon(
+                        painterResource(R.drawable.ic_mic),
+                        contentDescription = "Spoken",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.size(6.dp))
+                }
+                Text(exchange.command, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
         }
         Spacer(Modifier.size(6.dp))
         ReplyBubble(exchange.reply, Modifier.align(Alignment.Start))
@@ -301,20 +326,22 @@ private fun StatusLabel(tone: Tone) {
 @Composable
 private fun CommandBar(
     state: HomeUiState,
+    micLevel: Float,
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
     onCancel: () -> Unit,
     onMicClick: () -> Unit,
 ) {
+    val voice = state.voice
     Row(
         Modifier.fillMaxWidth().padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FilledTonalIconButton(onClick = onMicClick, modifier = Modifier.size(48.dp)) {
-            Icon(painterResource(R.drawable.ic_mic), contentDescription = "Speak a command")
-        }
+        MicButton(voice, micLevel, enabled = !state.isSending, onClick = onMicClick)
         Spacer(Modifier.size(8.dp))
-        OutlinedTextField(
+        if (voice != VoiceState.Idle) {
+            VoiceStatus(voice, Modifier.weight(1f))
+        } else OutlinedTextField(
             value = state.input,
             onValueChange = { text ->
                 // The field wraps long commands, so Enter would insert a newline; treat it as Send.
@@ -336,13 +363,73 @@ private fun CommandBar(
             keyboardActions = KeyboardActions(onSend = { onSend() }),
         )
         Spacer(Modifier.size(8.dp))
-        if (state.isSending) {
+        if (state.isBusy) {
             FilledIconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
-                Icon(painterResource(R.drawable.ic_stop), contentDescription = "Cancel")
+                Icon(painterResource(R.drawable.ic_close), contentDescription = "Cancel")
             }
         } else {
             FilledIconButton(onClick = onSend, enabled = state.canSend, modifier = Modifier.size(48.dp)) {
                 Icon(painterResource(R.drawable.ic_send), contentDescription = "Send command")
+            }
+        }
+    }
+}
+
+@Composable
+private fun MicButton(voice: VoiceState, level: Float, enabled: Boolean, onClick: () -> Unit) {
+    val recording = voice is VoiceState.Recording
+    val ring by animateFloatAsState(if (recording) 1f + level * 0.6f else 1f, label = "micRing")
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(56.dp)) {
+        if (recording) {
+            Box(
+                Modifier
+                    .size(48.dp)
+                    .graphicsLayer { scaleX = ring; scaleY = ring }
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.error.copy(alpha = 0.18f))
+            )
+        }
+        when (voice) {
+            is VoiceState.Recording -> FilledIconButton(
+                onClick = onClick,
+                modifier = Modifier.size(48.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                ),
+            ) { Icon(painterResource(R.drawable.ic_stop), contentDescription = "Stop and send voice command") }
+            VoiceState.Transcribing -> FilledTonalIconButton(onClick = {}, enabled = false, modifier = Modifier.size(48.dp)) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+            VoiceState.Idle -> FilledTonalIconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(48.dp)) {
+                Icon(painterResource(R.drawable.ic_mic), contentDescription = "Speak a command")
+            }
+        }
+    }
+}
+
+@Composable
+private fun VoiceStatus(voice: VoiceState, modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = modifier
+            .height(56.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Column(Modifier.padding(horizontal = 18.dp), verticalArrangement = Arrangement.Center) {
+            when (voice) {
+                is VoiceState.Recording -> {
+                    val secs = voice.elapsedMs / 1000
+                    Text("Listening…  0:%02d".format(secs), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Tap ■ to send · up to 0:30",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                VoiceState.Transcribing -> Text("Understanding…", style = MaterialTheme.typography.bodyLarge)
+                VoiceState.Idle -> Unit
             }
         }
     }

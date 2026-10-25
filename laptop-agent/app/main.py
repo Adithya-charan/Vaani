@@ -8,11 +8,13 @@ import socket
 from fastapi import FastAPI
 
 from app.api.commands import router as commands_router
+from app.api.voice import router as voice_router
 from app.config import Settings, load_settings
 from app.security.network import ClientNetworkMiddleware
 from app.services.ai_planner import AIPlanner, GroqPlanner
 from app.services.command_executor import CommandExecutor, Launcher, default_launcher
 from app.services.file_search import FileSearcher
+from app.services.sarvam import SarvamVoice
 
 
 def create_app(
@@ -20,10 +22,15 @@ def create_app(
     launcher: Launcher = default_launcher,
     planner: AIPlanner | None = None,
     use_configured_planner: bool = True,
+    voice: SarvamVoice | None = None,
+    use_configured_voice: bool = True,
 ) -> FastAPI:
     settings = settings or load_settings()
     if planner is None and use_configured_planner and settings.groq_api_key:
         planner = GroqPlanner(settings.groq_api_key, settings.groq_model, list(settings.approved_folders))
+    if voice is None and use_configured_voice and settings.sarvam_api_key:
+        voice = SarvamVoice(settings.sarvam_api_key, settings.sarvam_stt_model, settings.sarvam_tts_model,
+                            keyterms=list(settings.approved_folders))
 
     docs = settings.enable_docs
     app = FastAPI(
@@ -34,10 +41,12 @@ def create_app(
     )
     app.state.settings = settings
     app.state.planner = planner
+    app.state.voice = voice
     app.state.executor = CommandExecutor(
         searcher=FileSearcher(settings.approved_folders),
         launcher=launcher,
         ai_enabled=planner is not None,
+        voice_enabled=voice is not None,
     )
 
     @app.get("/health")
@@ -45,6 +54,7 @@ def create_app(
         return {"status": "ok", "service": "vaani-laptop-agent"}
 
     app.include_router(commands_router)
+    app.include_router(voice_router)
     app.add_middleware(ClientNetworkMiddleware, allowed=settings.allowed_clients)
     return app
 

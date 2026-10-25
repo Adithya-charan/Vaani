@@ -124,6 +124,49 @@ class HttpAgentRepositoryTest {
     }
 
     @Test
+    fun `transcribe uploads wav as multipart and parses transcript`() = runBlocking {
+        respond(body = """{"transcript":" Open calculator, please. ","language_code":"en-IN"}""")
+        val wav = "RIFF".toByteArray() + ByteArray(100)
+        val t = (repo().transcribe(wav) as AgentResult.Ok).value
+        assertEquals("Open calculator, please.", t.text)
+        assertEquals("en-IN", t.languageCode)
+        val req = server.takeRequest()
+        assertEquals("/voice/transcribe", req.url.encodedPath)
+        assertEquals("Bearer $TOKEN", req.headers["Authorization"])
+        assertTrue(req.headers["Content-Type"]!!.startsWith("multipart/form-data"))
+        val body = req.body!!.utf8()
+        assertTrue(body.contains("name=\"file\"; filename=\"command.wav\""))
+        assertTrue(body.contains("Content-Type: audio/wav"))
+        assertTrue(body.contains("name=\"language\"\r\nContent-Length: 7\r\n\r\nunknown") || body.contains("unknown"))
+    }
+
+    @Test
+    fun `speak returns audio bytes`() = runBlocking {
+        val wav = "RIFF".toByteArray() + ByteArray(200) { 7 }
+        server.enqueue(MockResponse.Builder().code(200).addHeader("Content-Type", "audio/wav")
+            .body(okio.Buffer().write(wav)).build())
+        val audio = (repo().speak("Calculator opened.") as AgentResult.Ok).value
+        assertTrue(audio.contentEquals(wav))
+        val req = server.takeRequest()
+        assertEquals("/voice/speak", req.url.encodedPath)
+        assertEquals("""{"text":"Calculator opened.","language":"en-IN"}""", req.body!!.utf8())
+    }
+
+    @Test
+    fun `laptop error detail is shown to the user`() = runBlocking {
+        respond(503, """{"detail":"Voice is not set up on the laptop (SARVAM_API_KEY is missing)."}""")
+        val err = (repo().transcribe(ByteArray(2000)) as AgentResult.Failed).error
+        assertEquals(AgentError.Server("Voice is not set up on the laptop (SARVAM_API_KEY is missing)."), err)
+
+        respond(422, """{"detail":[{"loc":["body","command"],"msg":"too long"}]}""")
+        assertEquals(AgentError.Server("The laptop couldn't read that request."),
+            (repo().sendCommand("x") as AgentResult.Failed).error)
+
+        respond(200, "")
+        assertTrue((repo().speak("x") as AgentResult.Failed).error is AgentError.Server)
+    }
+
+    @Test
     fun `connections are not kept idle for reuse`() = runBlocking {
         val client = defaultHttpClient()
         respond(body = """{"request_id":"s","status":"success","message":"ok","data":{"hostname":"PC"}}""")

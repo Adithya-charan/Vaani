@@ -42,9 +42,12 @@ _EXTENSIONS = {"pdf", "doc", "docx", "txt", "xls", "xlsx", "csv", "ppt", "pptx",
 
 def _normalise(text: str) -> str:
     text = text.strip().lower()
-    text = re.sub(r"[?!,]+$|\.+$", "", text).strip()
+    # Speech-to-text adds punctuation ("Open calculator, please."); drop it and polite endings.
+    text = re.sub(r"[?!,;]+", " ", text)
+    text = re.sub(r"\.+$", "", text).strip()
+    text = re.sub(r"\s+(?:please|thanks|thank you)$", "", text)
     text = _FILLER.sub("", text)
-    return re.sub(r"\s+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def parse_command(text: str) -> dict[str, Any] | None:

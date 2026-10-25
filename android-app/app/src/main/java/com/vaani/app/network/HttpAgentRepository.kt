@@ -8,6 +8,11 @@ import com.vaani.app.data.CommandResult
 import com.vaani.app.data.CommandStatus
 import com.vaani.app.data.FoundFile
 import com.vaani.app.data.SearchSummary
+import com.vaani.app.data.Transcription
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import okhttp3.MultipartBody
+import okhttp3.ResponseBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -30,6 +35,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 private val JSON_MEDIA = "application/json".toMediaType()
+private val WAV_MEDIA = "audio/wav".toMediaType()
 
 fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(5, TimeUnit.SECONDS)
@@ -50,8 +56,28 @@ class HttpAgentRepository(
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    override suspend fun transcribe(wav: ByteArray, language: String): AgentResult<Transcription> {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("file", "command.wav", wav.toRequestBody(WAV_MEDIA))
+            .addFormDataPart("language", language)
+            .build()
+        return execute(request("voice", "transcribe").post(body).build()) { response ->
+            val dto = json.decodeFromString<TranscriptDto>(response.string())
+            Transcription(dto.transcript.trim(), dto.languageCode)
+        }
+    }
+
+    override suspend fun speak(text: String, language: String): AgentResult<ByteArray> {
+        val payload = json.encodeToString(SpeakRequestDto.serializer(), SpeakRequestDto(text.take(500), language))
+        return execute(request("voice", "speak").post(payload.toRequestBody(JSON_MEDIA)).build()) { response ->
+            response.bytes().also { require(it.size > 44) { "empty audio" } }
+        }
+    }
+
     override suspend fun checkStatus(): AgentResult<AgentStatus> =
-        execute(request("status").get().build()) { body ->
+        execute(request("status").get().build()) { response ->
+            val body = response.string()
             val r = json.decodeFromString<CommandResponseDto>(body)
             AgentStatus(
                 hostname = r.data?.hostname ?: "laptop",
@@ -62,17 +88,26 @@ class HttpAgentRepository(
 
     override suspend fun sendCommand(command: String): AgentResult<CommandResult> {
         val payload = json.encodeToString(CommandRequestDto.serializer(), CommandRequestDto(command))
-        return execute(request("commands").post(payload.toRequestBody(JSON_MEDIA)).build()) { body ->
-            json.decodeFromString<CommandResponseDto>(body).toResult()
+        return execute(request("commands").post(payload.toRequestBody(JSON_MEDIA)).build()) { response ->
+            json.decodeFromString<CommandResponseDto>(response.string()).toResult()
         }
     }
 
-    private fun request(path: String) = Request.Builder()
-        .url(baseUrl.newBuilder().addPathSegment(path).build())
+    private fun request(vararg path: String) = Request.Builder()
+        .url(baseUrl.newBuilder().apply { path.forEach { addPathSegment(it) } }.build())
         .header("Authorization", "Bearer $token")
-        .header("Accept", "application/json")
 
-    private suspend fun <T> execute(request: Request, parse: (String) -> T): AgentResult<T> =
+    /** FastAPI errors look like {"detail": "..."}; validation errors have a list instead. */
+    private fun errorDetail(body: String): String? = try {
+        (json.parseToJsonElement(body).jsonObject["detail"] as? JsonPrimitive)
+            ?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+    } catch (e: SerializationException) {
+        null
+    } catch (e: IllegalArgumentException) {
+        null
+    }
+
+    private suspend fun <T> execute(request: Request, parse: (ResponseBody) -> T): AgentResult<T> =
         withContext(Dispatchers.IO) {
             val response = try {
                 client.newCall(request).await()
@@ -84,10 +119,15 @@ class HttpAgentRepository(
             response.use {
                 when {
                     it.code == 401 || it.code == 403 -> AgentResult.Failed(AgentError.Unauthorized)
-                    it.code == 422 -> AgentResult.Failed(AgentError.Server("The laptop couldn't read that command."))
-                    !it.isSuccessful -> AgentResult.Failed(AgentError.Server("The laptop agent returned an error (HTTP ${it.code})."))
+                    !it.isSuccessful -> {
+                        val detail = try { errorDetail(it.body.string()) } catch (e: IOException) { null }
+                        AgentResult.Failed(AgentError.Server(detail ?: when (it.code) {
+                            422 -> "The laptop couldn't read that request."
+                            else -> "The laptop agent returned an error (HTTP ${it.code})."
+                        }))
+                    }
                     else -> try {
-                        AgentResult.Ok(parse(it.body.string()))
+                        AgentResult.Ok(parse(it.body))
                     } catch (e: SerializationException) {
                         AgentResult.Failed(AgentError.Server("The laptop sent a reply this app doesn't understand."))
                     } catch (e: IllegalArgumentException) {
@@ -111,6 +151,15 @@ private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont 
 
 @Serializable
 private data class CommandRequestDto(val command: String)
+
+@Serializable
+private data class SpeakRequestDto(val text: String, val language: String)
+
+@Serializable
+private data class TranscriptDto(
+    val transcript: String,
+    @kotlinx.serialization.SerialName("language_code") val languageCode: String? = null,
+)
 
 @Serializable
 private data class FoundFileDto(

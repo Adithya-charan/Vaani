@@ -1,8 +1,16 @@
 package com.vaani.app
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import com.vaani.app.data.SharedVoicePrefs
+import com.vaani.app.speech.AndroidReplySpeaker
+import com.vaani.app.speech.AndroidVoiceRecorder
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.LaunchedEffect
@@ -26,12 +34,28 @@ class MainActivity : ComponentActivity() {
     private val settingsStore by lazy { KeystoreSettingsStore(applicationContext) }
     private val repository by lazy { ConfigurableAgentRepository(settingsStore) }
 
+    private fun hasMicPermission() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             VaaniTheme {
-                val home: HomeViewModel = viewModel(factory = HomeViewModel.factory(repository))
+                val home: HomeViewModel = viewModel(
+                    factory = HomeViewModel.factory(
+                        repository = repository,
+                        recorder = AndroidVoiceRecorder(),
+                        speaker = AndroidReplySpeaker(applicationContext, repository),
+                        prefs = SharedVoicePrefs(applicationContext),
+                    )
+                )
+                val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                    if (granted) home.onMicClick()
+                    else home.onMicPermissionDenied(
+                        permanently = !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+                    )
+                }
                 var showSettings by rememberSaveable { mutableStateOf(settingsStore.load() == null) }
 
                 if (showSettings) {
@@ -60,16 +84,25 @@ class MainActivity : ComponentActivity() {
                     )
                 } else {
                     val state by home.state.collectAsStateWithLifecycle()
+                    val micLevel = home.micLevel?.collectAsStateWithLifecycle()
                     HomeScreen(
                         state = state,
                         onInputChange = home::onInputChange,
                         onSend = home::onSend,
                         onCancel = home::onCancel,
                         onQuickCommand = home::onQuickCommand,
-                        onMicClick = home::onMicClick,
+                        onMicClick = {
+                            if (hasMicPermission()) home.onMicClick()
+                            else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                        },
                         onRefreshConnection = home::refreshConnection,
                         onNoticeShown = home::onNoticeShown,
-                        onOpenSettings = { showSettings = true },
+                        onOpenSettings = {
+                            home.stopSpeaking()
+                            showSettings = true
+                        },
+                        onToggleMute = home::onToggleMute,
+                        micLevel = micLevel?.value ?: 0f,
                     )
                 }
             }

@@ -48,6 +48,7 @@ class CommandExecutor:
     searcher: FileSearcher
     launcher: Launcher = default_launcher
     ai_enabled: bool = False
+    voice_enabled: bool = False
     started_at: float = field(default_factory=time.time)
 
     def execute(self, plan: Any) -> Outcome:
@@ -89,6 +90,7 @@ class CommandExecutor:
                 "hostname": platform.node(),
                 "uptime_seconds": int(time.time() - self.started_at),
                 "ai_planner": self.ai_enabled,
+                "voice": self.voice_enabled,
                 "approved_folders": list(self.searcher.roots),
             },
         )

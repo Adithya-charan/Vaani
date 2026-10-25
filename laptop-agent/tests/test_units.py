@@ -17,6 +17,9 @@ from app.services.file_search import FileSearcher, FolderNotApproved
 
 @pytest.mark.parametrize("text,expected", [
     ("open calculator", {"action": "open_calculator"}),
+    ("Open calculator, please.", {"action": "open_calculator"}),
+    ("Vaani, open notepad, thank you!", {"action": "open_notepad"}),
+    ("Find my resume, in Desktop.", {"action": "find_file", "query": "resume", "folder": "desktop"}),
     ("Launch the calc!", {"action": "open_calculator"}),
     ("start notepad", {"action": "open_notepad"}),
     ("open explorer", {"action": "open_explorer"}),
