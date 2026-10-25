@@ -52,6 +52,7 @@ class CommandExecutor:
     started_at: float = field(default_factory=time.time)
 
     def execute(self, plan: Any) -> Outcome:
+        # Dispatch on validated plan types only; anything unrecognised is refused, never guessed at.
         if isinstance(plan, (OpenCalculator, OpenNotepad, OpenExplorer)):
             return self._launch(plan.action)
         if isinstance(plan, FindFile):
