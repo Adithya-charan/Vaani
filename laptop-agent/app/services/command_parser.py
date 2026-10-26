@@ -61,7 +61,19 @@ def _normalise(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+# Matched on the original text so the prompt keeps the user's own wording and case.
+_ASK_CHATGPT = re.compile(
+    r"^\s*(?:(?:hey|ok|okay)\s+)?(?:vaani[\s,]+)?(?:please\s+)?(?:ask|tell)\s+chat\s?gpt\b[\s,:;-]*"
+    r"(?:to\s+|that\s+|about\s+)?(?P<p>\S.*?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def parse_command(text: str) -> dict[str, Any] | None:
+    ask = _ASK_CHATGPT.match(text)
+    if ask:
+        return {"action": "ask_chatgpt", "prompt": ask.group("p")}
+
     norm = _normalise(text)
 
     # Exact action names, e.g. {"command": "open_calculator"}.

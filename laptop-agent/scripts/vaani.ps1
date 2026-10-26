@@ -10,10 +10,11 @@
   .\scripts\vaani.ps1 logs       # follow the agent log
   .\scripts\vaani.ps1 enable-autostart    # start at Windows login (current user only)
   .\scripts\vaani.ps1 disable-autostart
+  .\scripts\vaani.ps1 telegram-chats      # chat ids of people who messaged your bot (for TELEGRAM_RECIPIENTS)
 #>
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('start', 'stop', 'restart', 'status', 'logs', 'enable-autostart', 'disable-autostart')]
+    [ValidateSet('start', 'stop', 'restart', 'status', 'logs', 'enable-autostart', 'disable-autostart', 'telegram-chats')]
     [string]$Command
 )
 
@@ -87,6 +88,25 @@ switch ($Command) {
         $lnk.WindowStyle = 7
         $lnk.Save()
         Write-Output "Autostart enabled: $Shortcut"
+    }
+    'telegram-chats' {
+        $py = Join-Path $AgentDir '.venv\Scripts\python.exe'
+        & $py -c @'
+import sys
+from app.config import load_settings
+from app.services.telegram import TelegramError, recent_chats
+s = load_settings()
+if not s.telegram_bot_token:
+    sys.exit("TELEGRAM_BOT_TOKEN is not set in .env")
+try:
+    chats = recent_chats(s.telegram_bot_token)
+except TelegramError as e:
+    sys.exit(e.message)
+if not chats:
+    print("No chats yet. Ask each recipient to open your bot in Telegram and press Start, then run this again.")
+for c in chats:
+    print(f"{c['name']}={c['chat_id']}" + (f"   (@{c['username']})" if c['username'] else ""))
+'@
     }
     'disable-autostart' {
         if (Test-Path $Shortcut) { Remove-Item $Shortcut; Write-Output 'Autostart disabled.' }

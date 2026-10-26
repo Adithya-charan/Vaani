@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import subprocess
@@ -12,11 +13,16 @@ from typing import Any, Callable
 from urllib.parse import quote_plus
 
 from app.models.command import (
-    FindFile, GetStatus, OpenCalculator, OpenChatGPT, OpenExplorer, OpenFile, OpenNotepad, WebSearch,
+    AskChatGPT, ChatGPTPrompt, FindFile, GetStatus, OpenCalculator, OpenChatGPT, OpenExplorer, OpenFile,
+    OpenNotepad, TelegramSend, WebSearch,
 )
+from app.services.chatgpt import ChatGPTDriver, ChatGPTError
+from app.services.telegram import MAX_UPLOAD_BYTES, TelegramError, TelegramSender
+from app.services.zipper import TEMP_ROOT, ZipError, make_zip
 from app.services.file_search import FileSearcher, FolderNotApproved, ItemMissing, ItemNotAllowed, modified_iso
 
-AGENT_VERSION = "0.2.0"
+AGENT_VERSION = "0.3.0"
+log = logging.getLogger("vaani.executor")
 
 Launcher = Callable[[list[str]], None]
 ShellOpener = Callable[[str], None]
@@ -70,6 +76,9 @@ class CommandExecutor:
     searcher: FileSearcher
     launcher: Launcher = default_launcher
     shell_open: ShellOpener = default_shell_open
+    chatgpt: ChatGPTDriver | None = None
+    telegram: TelegramSender | None = None
+    zip_temp_root: Path = TEMP_ROOT
     ai_enabled: bool = False
     voice_enabled: bool = False
     started_at: float = field(default_factory=time.time)
@@ -89,7 +98,77 @@ class CommandExecutor:
             return self._open_url(CHATGPT_URL, "Opening ChatGPT in your browser.")
         if isinstance(plan, OpenFile):
             return self._open_file(plan)
+        if isinstance(plan, AskChatGPT):
+            # A proposal only: nothing is sent until the phone confirms this exact prompt.
+            return Outcome("needs_confirmation", "Send this prompt to ChatGPT on your laptop?",
+                           {"confirm": {"action": "chatgpt_prompt", "prompt": plan.prompt}})
+        if isinstance(plan, ChatGPTPrompt):
+            return self._chatgpt_prompt(plan.prompt)
+        if isinstance(plan, TelegramSend):
+            return self._telegram_send(plan)
         return Outcome("rejected", "This action is not supported.")
+
+    def _telegram_send(self, plan: TelegramSend) -> Outcome:
+        if self.telegram is None:
+            return Outcome("error", "Telegram isn't set up on the laptop (TELEGRAM_BOT_TOKEN is missing).")
+        if plan.recipient not in self.telegram.recipients:
+            return Outcome("rejected", f"'{plan.recipient}' is not one of your Telegram recipients.")
+        name = plan.path.rsplit("/", 1)[-1]
+        try:
+            target = self.searcher.resolve_item(plan.path)
+        except FolderNotApproved:
+            return Outcome("rejected", "That location is not an approved folder.")
+        except ItemNotAllowed:
+            return Outcome("rejected", "Vaani can only send items inside your approved folders.")
+        except ItemMissing:
+            return Outcome("not_found", f"{name} is no longer there. Search again.")
+
+        archive = None
+        try:
+            if target.is_dir():
+                if not plan.as_zip:
+                    return Outcome("rejected", "Folders are sent as a ZIP. Confirm sending it as a ZIP.")
+                try:
+                    archive = make_zip(target, self.zip_temp_root, max_zip_bytes=MAX_UPLOAD_BYTES)
+                except ZipError as exc:
+                    return Outcome("error" if exc.kind in ("archive_failed", "no_space") else "rejected", exc.message)
+                to_send, sent_name, size = archive.path, archive.path.name, archive.size
+            else:
+                if plan.as_zip:
+                    return Outcome("rejected", "Only folders are sent as a ZIP.")
+                stat = target.stat()
+                if (plan.expected_size is not None and stat.st_size != plan.expected_size) or (
+                    plan.expected_modified is not None and modified_iso(stat.st_mtime) != plan.expected_modified
+                ):
+                    return Outcome("rejected", f"{name} has changed since you searched. Search again to send it.")
+                to_send, sent_name, size = target, target.name, stat.st_size
+            try:
+                message_id = self.telegram.send_document(plan.recipient, to_send, sent_name)
+            except TelegramError as exc:
+                return Outcome("rejected" if exc.kind in ("too_large", "unknown_recipient") else "error",
+                               exc.message, {"reason": exc.kind})
+            data = {"recipient": plan.recipient, "name": sent_name, "size": size, "message_id": message_id,
+                    "zip": archive is not None}
+            if archive is not None:
+                data["files_in_zip"] = archive.files
+                data["skipped"] = len(archive.skipped)
+            skipped = f" ({len(archive.skipped)} item(s) skipped)" if archive and archive.skipped else ""
+            return Outcome("success", f"Sent {sent_name} to {plan.recipient} on Telegram{skipped}.", data)
+        finally:
+            if archive is not None:
+                problem = archive.cleanup()
+                if problem:
+                    log.warning("could not delete temporary ZIP (%s)", problem)
+
+    def _chatgpt_prompt(self, prompt: str) -> Outcome:
+        if self.chatgpt is None:
+            return Outcome("error", "ChatGPT automation isn't installed on the laptop (Playwright is missing).")
+        try:
+            self.chatgpt.submit(prompt)
+        except ChatGPTError as exc:
+            status = "rejected" if exc.kind == "busy" else "error"
+            return Outcome(status, exc.message, {"reason": exc.kind})
+        return Outcome("success", "Prompt sent to ChatGPT. The answer is on your laptop screen.", {"verified": True})
 
     def _launch(self, action: str) -> Outcome:
         try:
@@ -158,6 +237,8 @@ class CommandExecutor:
                 "uptime_seconds": int(time.time() - self.started_at),
                 "ai_planner": self.ai_enabled,
                 "voice": self.voice_enabled,
+                "chatgpt_automation": self.chatgpt is not None,
+                "telegram_recipients": sorted(self.telegram.recipients) if self.telegram else [],
                 "approved_folders": list(self.searcher.roots),
             },
         )

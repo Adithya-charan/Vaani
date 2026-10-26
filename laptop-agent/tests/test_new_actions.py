@@ -102,7 +102,7 @@ def test_open_chatgpt(make_client, opened):
 
 
 def test_chatgpt_rejects_extra_fields(make_client, opened):
-    body = post(make_client(planner=FakePlanner({"action": "open_chatgpt", "prompt": "hi"})), "ask chatgpt hi please")
+    body = post(make_client(planner=FakePlanner({"action": "open_chatgpt", "prompt": "hi"})), "chatgpt with hi please")
     assert body["status"] == "rejected"
     assert opened == []
 

@@ -18,7 +18,8 @@ ALLOWED_ACTIONS = (
 )
 # Actions that change something outside Vaani's own windows. They are never produced from
 # free text (rules or AI); only the phone's confirmation dialog can request them.
-CONFIRMED_ACTIONS = ("open_file",)
+CONFIRMED_ACTIONS = ("open_file", "chatgpt_prompt", "telegram_send")
+MAX_PROMPT_LENGTH = 500
 
 _QUERY_PUNCTUATION = set(" .-_()&'")
 
@@ -39,7 +40,7 @@ class CommandRequest(BaseModel):
 
 class CommandResponse(BaseModel):
     request_id: str
-    status: Literal["success", "not_found", "rejected", "error", "needs_clarification"]
+    status: Literal["success", "not_found", "rejected", "error", "needs_clarification", "needs_confirmation"]
     action: str | None = None
     message: str
     data: dict[str, Any] | None = None
@@ -121,6 +122,50 @@ class OpenChatGPT(_Plan):
     action: Literal["open_chatgpt"]
 
 
+def _prompt_text(v: str) -> str:
+    if any(unicodedata.category(ch)[0] == "C" and ch not in ("\n", "‌", "‍") for ch in v):
+        raise ValueError("control characters are not allowed")
+    v = v.strip()
+    if not v:
+        raise ValueError("empty prompt")
+    return v
+
+
+class AskChatGPT(_Plan):
+    """Proposal from free text. Executing it sends nothing: the phone must show the exact
+    prompt and send a confirmed ``chatgpt_prompt`` action."""
+
+    action: Literal["ask_chatgpt"]
+    prompt: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
+
+    @field_validator("prompt")
+    @classmethod
+    def _plain_prompt(cls, v: str) -> str:
+        return _prompt_text(v)
+
+
+class ChatGPTPrompt(_Plan):
+    action: Literal["chatgpt_prompt"]
+    prompt: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
+    confirmed: Literal[True]
+
+    @field_validator("prompt")
+    @classmethod
+    def _plain_prompt(cls, v: str) -> str:
+        return _prompt_text(v)
+
+
+def _alias_path(v: str) -> str:
+    """``<ApprovedFolder>/<relative path>`` exactly as search results report it."""
+    if any(unicodedata.category(ch)[0] == "C" for ch in v):
+        raise ValueError("control characters are not allowed")
+    parts = v.split("/")
+    if ("\\" in v or ":" in v or v.startswith("/") or any(p in ("", ".", "..") for p in parts)
+            or len(parts) < 2 or not re.fullmatch(r"[A-Za-z0-9_]{1,40}", parts[0])):
+        raise ValueError("path must be <ApprovedFolder>/<relative path>")
+    return v
+
+
 class OpenFile(_Plan):
     """Open one file or folder from search results. ``path`` is the alias-relative path the
     agent returned (e.g. "Desktop/B TECH/notes.pdf"); ``confirmed`` must be true."""
@@ -135,12 +180,31 @@ class OpenFile(_Plan):
     @field_validator("path")
     @classmethod
     def _alias_relative(cls, v: str) -> str:
-        if any(unicodedata.category(ch)[0] == "C" for ch in v):
-            raise ValueError("control characters are not allowed")
-        parts = v.split("/")
-        if ("\\" in v or ":" in v or v.startswith("/") or any(p in ("", ".", "..") for p in parts)
-                or len(parts) < 2 or not re.fullmatch(r"[A-Za-z0-9_]{1,40}", parts[0])):
-            raise ValueError("path must be <ApprovedFolder>/<relative path>")
+        return _alias_path(v)
+
+
+class TelegramSend(_Plan):
+    """Send one search result to an allowlisted recipient. A folder is sent as a ZIP and must
+    say so (``as_zip``), so the user knowingly confirmed packaging its contents."""
+
+    action: Literal["telegram_send"]
+    path: str = Field(min_length=3, max_length=400)
+    recipient: str = Field(min_length=1, max_length=30)
+    confirmed: Literal[True]
+    as_zip: bool = False
+    expected_size: int | None = Field(default=None, ge=0)
+    expected_modified: str | None = Field(default=None, max_length=40)
+
+    @field_validator("path")
+    @classmethod
+    def _alias_relative(cls, v: str) -> str:
+        return _alias_path(v)
+
+    @field_validator("recipient")
+    @classmethod
+    def _recipient_name(cls, v: str) -> str:
+        if not re.fullmatch(r"[\w .\-]{1,30}", v):
+            raise ValueError("recipient must be one of the configured names")
         return v
 
 
@@ -160,12 +224,13 @@ class Clarify(_Plan):
 
 
 ActionPlan = Annotated[
-    Union[OpenCalculator, OpenNotepad, OpenExplorer, GetStatus, FindFile, WebSearch, OpenChatGPT, Clarify],
+    Union[OpenCalculator, OpenNotepad, OpenExplorer, GetStatus, FindFile, WebSearch, OpenChatGPT,
+          AskChatGPT, Clarify],
     Field(discriminator="action"),
 ]
 # Plans that may come from free text (rule parser or AI planner).
 plan_adapter: TypeAdapter[ActionPlan] = TypeAdapter(ActionPlan)
 
-ConfirmedAction = Annotated[Union[OpenFile], Field(discriminator="action")]
+ConfirmedAction = Annotated[Union[OpenFile, ChatGPTPrompt, TelegramSend], Field(discriminator="action")]
 # Structured requests sent by the phone after the user confirmed them (POST /actions).
 confirmed_action_adapter: TypeAdapter[ConfirmedAction] = TypeAdapter(ConfirmedAction)

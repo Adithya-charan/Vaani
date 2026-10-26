@@ -39,6 +39,7 @@ Reply with a single JSON object and nothing else. Allowed objects:
 {{"action":"find_file","query":"<words in the file or folder name>","folder":<one of [{folder_list}] or null>,"extension":<e.g. "pdf" or null>,"newest_first":<true|false>}}
 {{"action":"web_search","query":"<what to search for on Google>"}}
 {{"action":"open_chatgpt"}}
+{{"action":"ask_chatgpt","prompt":"<the question or request for ChatGPT, in the user's own words>"}}
 {{"action":"clarify","question":"<short question>"}}
 Rules:
 - Use only these actions and keys. Never invent other actions or keys.
@@ -52,8 +53,9 @@ Rules:
 - Use "newest_first": true for words like latest, newest, recent (सबसे नई, తాజా).
 - "find_file" is for files on the laptop. "web_search" is only for searching the internet/Google;
   keep the user's search words (in their language) as "query".
-- "open_chatgpt" only opens the ChatGPT website. If the user wants a question typed or sent to
-  ChatGPT, reply {{"action":"clarify","question":"I can open ChatGPT, but I can't type a question into it yet. Shall I just open it?"}}
+- "open_chatgpt" only opens the ChatGPT website. When the user wants ChatGPT to answer or do
+  something, use "ask_chatgpt" with their request as "prompt" (keep their language and wording;
+  do not answer it yourself). The phone shows the prompt for confirmation before anything is sent.
 - Opening a specific file is done by tapping a search result on the phone, not by request; for
   "open my resume" use "find_file" so the user can pick the file.
 - If the request is ambiguous or names nothing specific ("open that thing", "find it"), use "clarify".

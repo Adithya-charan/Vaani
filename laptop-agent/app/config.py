@@ -59,13 +59,17 @@ class Settings:
     sarvam_api_key: str | None = None
     sarvam_stt_model: str = "saaras:v4"
     sarvam_tts_model: str = "bulbul:v4-flash"
+    telegram_bot_token: str | None = None
+    telegram_recipients: dict[str, int] = field(default_factory=dict)
 
     def __repr__(self) -> str:  # never leak secrets through repr/logging
         return (
             f"Settings(hosts={list(self.hosts)}, port={self.port}, "
             f"approved_folders={list(self.approved_folders)}, "
             f"groq={'set' if self.groq_api_key else 'unset'}, "
-            f"sarvam={'set' if self.sarvam_api_key else 'unset'})"
+            f"sarvam={'set' if self.sarvam_api_key else 'unset'}, "
+            f"telegram={'set' if self.telegram_bot_token else 'unset'}, "
+            f"telegram_recipients={list(self.telegram_recipients)})"
         )
 
 
@@ -157,4 +161,15 @@ def load_settings(env_file: Path | None = None) -> Settings:
         sarvam_api_key=os.getenv("SARVAM_API_KEY") or None,
         sarvam_stt_model=os.getenv("SARVAM_STT_MODEL", "saaras:v4"),
         sarvam_tts_model=os.getenv("SARVAM_TTS_MODEL", "bulbul:v4-flash"),
+        telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
+        telegram_recipients=_recipients(os.getenv("TELEGRAM_RECIPIENTS")),
     )
+
+
+def _recipients(raw: str | None) -> dict[str, int]:
+    from app.services.telegram import parse_recipients
+
+    try:
+        return parse_recipients(raw)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc

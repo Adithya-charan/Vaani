@@ -15,7 +15,10 @@ from app.services.ai_planner import AIPlanner, GroqPlanner
 from app.services.command_executor import (
     CommandExecutor, Launcher, ShellOpener, default_launcher, default_shell_open,
 )
+from app.services.chatgpt import ChatGPTDriver
+from app.services.chatgpt import default_driver as default_chatgpt_driver
 from app.services.file_search import FileSearcher
+from app.services.telegram import TelegramBot, TelegramSender
 from app.services.sarvam import SarvamVoice
 
 
@@ -27,6 +30,10 @@ def create_app(
     voice: SarvamVoice | None = None,
     use_configured_voice: bool = True,
     shell_open: ShellOpener = default_shell_open,
+    chatgpt: ChatGPTDriver | None = None,
+    use_configured_chatgpt: bool = True,
+    telegram: TelegramSender | None = None,
+    use_configured_telegram: bool = True,
 ) -> FastAPI:
     settings = settings or load_settings()
     if planner is None and use_configured_planner and settings.groq_api_key:
@@ -49,6 +56,11 @@ def create_app(
         searcher=FileSearcher(settings.approved_folders),
         launcher=launcher,
         shell_open=shell_open,
+        chatgpt=chatgpt if chatgpt is not None or not use_configured_chatgpt else default_chatgpt_driver(),
+        telegram=telegram if telegram is not None or not use_configured_telegram else (
+            TelegramBot(settings.telegram_bot_token, settings.telegram_recipients)
+            if settings.telegram_bot_token else None
+        ),
         ai_enabled=planner is not None,
         voice_enabled=voice is not None,
     )
