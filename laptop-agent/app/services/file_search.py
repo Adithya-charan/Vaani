@@ -20,6 +20,18 @@ class FolderNotApproved(Exception):
     pass
 
 
+class ItemNotAllowed(Exception):
+    """The path leaves the approved folder or passes through a link."""
+
+
+class ItemMissing(Exception):
+    pass
+
+
+def modified_iso(st_mtime: float) -> str:
+    return datetime.fromtimestamp(st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
+
+
 def _squash(text: str) -> str:
     return re.sub(r"[\s_\-.]+", "", text.lower())
 
@@ -46,6 +58,28 @@ class FileSearcher:
             if alias.lower() == folder.lower():
                 return {alias: path}
         raise FolderNotApproved(folder)
+
+    def resolve_item(self, alias_path: str) -> Path:
+        """Turns "Desktop/a/b.pdf" (as returned by search) back into a real path, re-checking
+        everything at the moment of use: approved root, no links on the way, still exists."""
+        alias, _, rest = alias_path.partition("/")
+        ((_, root),) = self.resolve_roots(alias).items()
+        current = root
+        for part in rest.split("/"):
+            if part in ("", ".", ".."):
+                raise ItemNotAllowed(alias_path)
+            current = current / part
+            try:
+                if current.is_symlink() or current.is_junction():
+                    raise ItemNotAllowed(alias_path)
+            except OSError as exc:
+                raise ItemMissing(alias_path) from exc
+        if not current.exists():
+            raise ItemMissing(alias_path)
+        resolved = current.resolve(strict=True)
+        if not resolved.is_relative_to(root) or resolved == root:
+            raise ItemNotAllowed(alias_path)
+        return resolved
 
     def search(
         self,
@@ -125,5 +159,5 @@ class FileSearcher:
             "path": f"{alias}/{path.relative_to(root).as_posix()}",
             "type": "folder" if is_dir else "file",
             "size": None if is_dir else stat.st_size,
-            "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(timespec="seconds"),
+            "modified": modified_iso(stat.st_mtime),
         }

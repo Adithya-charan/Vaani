@@ -59,11 +59,19 @@ def launcher() -> RecordingLauncher:
 
 
 @pytest.fixture
-def make_client(roots, launcher):
-    def _make(planner=None, launcher_override=None, client_ip="192.168.0.5", voice=None) -> TestClient:
+def opened() -> list[str]:
+    """URLs and file paths handed to Windows' default handler (recorded, never opened)."""
+    return []
+
+
+@pytest.fixture
+def make_client(roots, launcher, opened):
+    def _make(planner=None, launcher_override=None, client_ip="192.168.0.5", voice=None,
+              shell_open=None) -> TestClient:
         settings = Settings(auth_token=TOKEN, approved_folders=roots)
         app = create_app(settings, launcher=launcher_override or launcher, planner=planner,
-                         use_configured_planner=False, voice=voice, use_configured_voice=False)
+                         use_configured_planner=False, voice=voice, use_configured_voice=False,
+                         shell_open=shell_open or opened.append)
         return TestClient(app, client=(client_ip, 50000))
 
     return _make

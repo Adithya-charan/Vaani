@@ -9,7 +9,9 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
-from app.models.command import Clarify, CommandRequest, CommandResponse, GetStatus, plan_adapter
+from app.models.command import (
+    Clarify, CommandRequest, CommandResponse, GetStatus, confirmed_action_adapter, plan_adapter,
+)
 from app.security.auth import require_token
 from app.services.ai_planner import PlannerError
 from app.services.command_parser import parse_command
@@ -31,6 +33,20 @@ def _respond(rid: str, status: str, message: str, action: str | None = None,
 async def get_status(request: Request) -> CommandResponse:
     outcome = request.app.state.executor.execute(GetStatus(action="get_status"))
     return _respond(uuid.uuid4().hex, outcome.status, outcome.message, "get_status", outcome.data)
+
+
+@router.post("/actions", response_model=CommandResponse)
+async def run_confirmed_action(request: Request) -> CommandResponse:
+    """Structured actions the user confirmed on the phone (e.g. opening a search result).
+    These never come from free text, so neither the rules nor the AI planner can trigger them."""
+    rid = uuid.uuid4().hex
+    try:
+        body = await request.json()
+        plan = confirmed_action_adapter.validate_python(body)
+    except (ValidationError, ValueError):
+        return _respond(rid, "rejected", "That request is not valid or was not confirmed.")
+    outcome = await run_in_threadpool(request.app.state.executor.execute, plan)
+    return _respond(rid, outcome.status, outcome.message, plan.action, outcome.data, "confirmed")
 
 
 @router.post("/commands", response_model=CommandResponse)

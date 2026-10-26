@@ -25,6 +25,14 @@ _SIMPLE_RULES: list[tuple[re.Pattern[str], str]] = [
         ),
         "get_status",
     ),
+    (re.compile(rf"^(?:{_OPEN}|go to\s+)(?:chatgpt|chat gpt|chat gbt)(?:\s+website)?$"), "open_chatgpt"),
+]
+
+# Web search needs an explicit "google"/"web" word; plain "search for X" stays a file search.
+_WEB_SEARCH = [
+    re.compile(r"^(?:google|google search(?: for)?|search google for|search on google for|"
+               r"search (?:the )?(?:web|internet) for|web search(?: for)?)\s+(?P<q>.+)$"),
+    re.compile(r"^(?:search(?: for)?|look up|find)\s+(?P<q>.+?)\s+on (?:google|the web|the internet)$"),
 ]
 
 _SEARCH_FOLDER_FOR = re.compile(
@@ -57,12 +65,17 @@ def parse_command(text: str) -> dict[str, Any] | None:
     norm = _normalise(text)
 
     # Exact action names, e.g. {"command": "open_calculator"}.
-    if norm in ALLOWED_ACTIONS and norm != "find_file":
+    if norm in ALLOWED_ACTIONS and norm not in ("find_file", "web_search"):
         return {"action": norm}
 
     for pattern, action in _SIMPLE_RULES:
         if pattern.match(norm):
             return {"action": action}
+
+    for pattern in _WEB_SEARCH:
+        match = pattern.match(norm)
+        if match:
+            return {"action": "web_search", "query": match.group("q").strip()}
 
     match = _SEARCH_FOLDER_FOR.match(norm) or _FIND_IN_FOLDER.match(norm)
     if match:

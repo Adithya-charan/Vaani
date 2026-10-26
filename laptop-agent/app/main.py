@@ -12,7 +12,9 @@ from app.api.voice import router as voice_router
 from app.config import Settings, load_settings
 from app.security.network import ClientNetworkMiddleware
 from app.services.ai_planner import AIPlanner, GroqPlanner
-from app.services.command_executor import CommandExecutor, Launcher, default_launcher
+from app.services.command_executor import (
+    CommandExecutor, Launcher, ShellOpener, default_launcher, default_shell_open,
+)
 from app.services.file_search import FileSearcher
 from app.services.sarvam import SarvamVoice
 
@@ -24,6 +26,7 @@ def create_app(
     use_configured_planner: bool = True,
     voice: SarvamVoice | None = None,
     use_configured_voice: bool = True,
+    shell_open: ShellOpener = default_shell_open,
 ) -> FastAPI:
     settings = settings or load_settings()
     if planner is None and use_configured_planner and settings.groq_api_key:
@@ -45,6 +48,7 @@ def create_app(
     app.state.executor = CommandExecutor(
         searcher=FileSearcher(settings.approved_folders),
         launcher=launcher,
+        shell_open=shell_open,
         ai_enabled=planner is not None,
         voice_enabled=voice is not None,
     )
