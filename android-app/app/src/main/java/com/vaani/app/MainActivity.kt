@@ -107,8 +107,10 @@ class MainActivity : ComponentActivity() {
                         },
                         onToggleMute = home::onToggleMute,
                         onOpenResult = home::onResultTapped,
-                        onConfirmOpen = home::onConfirmOpen,
-                        onDismissOpen = home::onDismissOpen,
+                        onChooseOpen = home::onChooseOpen,
+                        onChooseTelegram = home::onChooseTelegram,
+                        onConfirm = home::onConfirm,
+                        onDismissConfirm = home::onDismissConfirm,
                         micLevel = micLevel?.value ?: 0f,
                     )
                 }

@@ -1,7 +1,7 @@
 package com.vaani.app.data
 
 /** Mirrors the laptop agent's `status` field. */
-enum class CommandStatus { Success, NotFound, Rejected, Error, NeedsClarification }
+enum class CommandStatus { Success, NotFound, Rejected, Error, NeedsClarification, NeedsConfirmation }
 
 data class FoundFile(
     val name: String,
@@ -27,9 +27,25 @@ data class CommandResult(
     val files: List<FoundFile> = emptyList(),
     val usedAi: Boolean = false,
     val search: SearchSummary? = null,
+    /** Set with [CommandStatus.NeedsConfirmation]: the exact ChatGPT prompt awaiting the user's OK. */
+    val chatGptPrompt: String? = null,
 )
 
-data class AgentStatus(val hostname: String, val aiPlanner: Boolean, val approvedFolders: List<String>)
+data class AgentStatus(
+    val hostname: String,
+    val aiPlanner: Boolean,
+    val approvedFolders: List<String>,
+    val telegramRecipients: List<String> = emptyList(),
+    val chatGptAutomation: Boolean = false,
+)
+
+/** Something the laptop does only after the user explicitly confirms it on the phone. */
+sealed interface Confirmation {
+    data class OpenFile(val file: FoundFile) : Confirmation
+    data class AskChatGPT(val prompt: String) : Confirmation
+    /** A folder is sent as a ZIP of its contents. */
+    data class SendTelegram(val file: FoundFile, val recipient: String) : Confirmation
+}
 
 /** Why a request never produced a [CommandResult]. Never shown as success. */
 sealed interface AgentError {

@@ -2,7 +2,9 @@ package com.vaani.app.ui
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
+import com.vaani.app.data.Confirmation
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.IconButtonDefaults
@@ -102,11 +104,14 @@ fun HomeScreen(
     onToggleMute: () -> Unit = {},
     micLevel: Float = 0f,
     onOpenResult: (FoundFile) -> Unit = {},
-    onConfirmOpen: () -> Unit = {},
-    onDismissOpen: () -> Unit = {},
+    onChooseOpen: () -> Unit = {},
+    onChooseTelegram: (String) -> Unit = {},
+    onConfirm: () -> Unit = {},
+    onDismissConfirm: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
-    state.pendingOpen?.let { OpenConfirmDialog(it, onConfirmOpen, onDismissOpen) }
+    state.fileChoice?.let { FileChoiceDialog(it, state.telegramRecipients, onChooseOpen, onChooseTelegram, onDismissConfirm) }
+    state.pendingConfirm?.let { ConfirmDialog(it, onConfirm, onDismissConfirm) }
     LaunchedEffect(state.notice) {
         state.notice?.let {
             snackbar.showSnackbar(it)
@@ -266,28 +271,95 @@ private fun ExchangeItem(exchange: Exchange, onOpen: ((FoundFile) -> Unit)?) {
 private data class Tone(val label: String, val color: Color)
 
 @Composable
-private fun OpenConfirmDialog(file: FoundFile, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+private fun FileSummary(file: FoundFile) {
     val details = listOfNotNull(FileFormat.size(file.sizeBytes), FileFormat.modified(file.modified)).joinToString(" · ")
+    Text(file.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    // Full path so duplicates with the same name can be told apart.
+    Text(file.path.replace("/", " › "), style = MaterialTheme.typography.bodyMedium)
+    if (details.isNotEmpty()) {
+        Text(details, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun Hint(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun FileChoiceDialog(
+    file: FoundFile,
+    recipients: List<String>,
+    onOpen: () -> Unit,
+    onTelegram: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (file.isFolder) "Open this folder on your laptop?" else "Open this file on your laptop?") },
+        title = { Text(if (file.isFolder) "What should Vaani do with this folder?" else "What should Vaani do with this file?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(file.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                // Full path so duplicates with the same name can be told apart.
-                Text(file.path.replace("/", " › "), style = MaterialTheme.typography.bodyMedium)
-                if (details.isNotEmpty()) {
-                    Text(details, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FileSummary(file)
+                Spacer(Modifier.size(8.dp))
+                OutlinedButton(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (file.isFolder) "Open in File Explorer" else "Open on laptop")
                 }
-                Text(
-                    if (file.isFolder) "It opens in File Explorer on the laptop."
-                    else "It opens with its default app on the laptop's screen.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                recipients.forEach { name ->
+                    OutlinedButton(onClick = { onTelegram(name) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (file.isFolder) "Send as ZIP to $name (Telegram)" else "Send to $name (Telegram)")
+                    }
+                }
+                Hint("You'll confirm on the next screen.")
             }
         },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("Open") } },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun ConfirmDialog(confirmation: Confirmation, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val (title, button) = when (confirmation) {
+        is Confirmation.OpenFile ->
+            (if (confirmation.file.isFolder) "Open this folder on your laptop?" else "Open this file on your laptop?") to "Open"
+        is Confirmation.AskChatGPT -> "Send this to ChatGPT?" to "Send"
+        is Confirmation.SendTelegram -> "Send via Telegram?" to "Send"
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                when (confirmation) {
+                    is Confirmation.OpenFile -> {
+                        FileSummary(confirmation.file)
+                        Hint(if (confirmation.file.isFolder) "It opens in File Explorer on the laptop."
+                             else "It opens with its default app on the laptop's screen.")
+                    }
+                    is Confirmation.AskChatGPT -> {
+                        // The exact text that will be typed, so the user can catch transcription mistakes.
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(confirmation.prompt, modifier = Modifier.padding(12.dp),
+                                style = MaterialTheme.typography.bodyLarge)
+                        }
+                        Hint("Vaani types this into ChatGPT in its browser window on your laptop and presses Send. The answer appears on the laptop.")
+                    }
+                    is Confirmation.SendTelegram -> {
+                        FileSummary(confirmation.file)
+                        Text("To: ${confirmation.recipient}", style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold)
+                        Hint(if (confirmation.file.isFolder)
+                            "Everything inside this folder is packed into a ZIP (up to 50 MB) and sent from your Vaani bot."
+                            else "The file leaves your laptop and is sent from your Vaani bot (up to 50 MB).")
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(button) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
@@ -328,6 +400,7 @@ private fun ResultContent(result: CommandResult, onOpen: ((FoundFile) -> Unit)?)
         CommandStatus.Rejected -> Tone("Not allowed", MaterialTheme.colorScheme.error)
         CommandStatus.Error -> Tone("Failed", MaterialTheme.colorScheme.error)
         CommandStatus.NeedsClarification -> Tone("Question", MaterialTheme.colorScheme.secondary)
+        CommandStatus.NeedsConfirmation -> Tone("Waiting for your OK", MaterialTheme.colorScheme.secondary)
     }
     StatusLabel(tone)
     if (result.files.isNotEmpty()) {

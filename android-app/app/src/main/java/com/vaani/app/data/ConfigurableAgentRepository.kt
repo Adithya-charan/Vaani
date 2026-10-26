@@ -21,7 +21,7 @@ class ConfigurableAgentRepository(
     override suspend fun sendCommand(command: String) = current().sendCommand(command)
     override suspend fun transcribe(wav: ByteArray, language: String) = current().transcribe(wav, language)
     override suspend fun speak(text: String, language: String) = current().speak(text, language)
-    override suspend fun openConfirmed(file: FoundFile) = current().openConfirmed(file)
+    override suspend fun runConfirmed(confirmation: Confirmation) = current().runConfirmed(confirmation)
 }
 
 fun httpRepositoryFor(config: AgentConfig): AgentRepository =

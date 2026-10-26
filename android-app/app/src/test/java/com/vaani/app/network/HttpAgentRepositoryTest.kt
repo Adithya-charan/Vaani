@@ -3,6 +3,7 @@ package com.vaani.app.network
 import com.vaani.app.data.AgentError
 import com.vaani.app.data.AgentResult
 import com.vaani.app.data.CommandStatus
+import com.vaani.app.data.Confirmation
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -166,23 +167,59 @@ class HttpAgentRepositoryTest {
         assertTrue((repo().speak("x") as AgentResult.Failed).error is AgentError.Server)
     }
 
+    private val resume = com.vaani.app.data.FoundFile("my resume.pdf", "Desktop/B TECH/my resume.pdf", false, 199_000,
+        "2025-02-04T10:00:00+00:00")
+    private val folder = com.vaani.app.data.FoundFile("JavaProject", "Documents/JavaProject", true)
+
     @Test
-    fun `open confirmed posts the exact selected result to actions`() = runBlocking {
-        respond(body = """{"request_id":"o","status":"success","action":"open_file",
-            "message":"Opening my resume.pdf on your laptop.","data":{"path":"Desktop/B TECH/my resume.pdf","type":"file"},
-            "planner":"confirmed"}""")
-        val file = com.vaani.app.data.FoundFile("my resume.pdf", "Desktop/B TECH/my resume.pdf", false, 199_000,
-            "2025-02-04T10:00:00+00:00")
-        val r = (repo().openConfirmed(file) as AgentResult.Ok).value
-        assertEquals(CommandStatus.Success, r.status)
-        val req = server.takeRequest()
-        assertEquals("/actions", req.url.encodedPath)
-        assertEquals("Bearer $TOKEN", req.headers["Authorization"])
-        assertEquals(
-            """{"action":"open_file","path":"Desktop/B TECH/my resume.pdf","confirmed":true,""" +
-                """"expected_size":199000,"expected_modified":"2025-02-04T10:00:00+00:00"}""",
-            req.body!!.utf8(),
+    fun `confirmed actions are posted to actions with exact bodies`() = runBlocking {
+        val ok = """{"request_id":"o","status":"success","action":"x","message":"ok","planner":"confirmed"}"""
+        val cases = listOf(
+            Confirmation.OpenFile(resume) to
+                """{"action":"open_file","path":"Desktop/B TECH/my resume.pdf","expected_size":199000,""" +
+                """"expected_modified":"2025-02-04T10:00:00+00:00","confirmed":true}""",
+            Confirmation.AskChatGPT("Explain \"DNS\" simply") to
+                """{"action":"chatgpt_prompt","prompt":"Explain \"DNS\" simply","confirmed":true}""",
+            Confirmation.SendTelegram(resume, "Amma") to
+                """{"action":"telegram_send","path":"Desktop/B TECH/my resume.pdf","expected_size":199000,""" +
+                """"expected_modified":"2025-02-04T10:00:00+00:00","recipient":"Amma","as_zip":false,"confirmed":true}""",
+            Confirmation.SendTelegram(folder, "Me") to
+                """{"action":"telegram_send","path":"Documents/JavaProject","recipient":"Me","as_zip":true,"confirmed":true}""",
         )
+        for ((confirmation, expected) in cases) {
+            respond(body = ok)
+            assertEquals(CommandStatus.Success, (repo().runConfirmed(confirmation) as AgentResult.Ok).value.status)
+            val req = server.takeRequest()
+            assertEquals("/actions", req.url.encodedPath)
+            assertEquals("Bearer $TOKEN", req.headers["Authorization"])
+            assertEquals(expected, req.body!!.utf8())
+        }
+    }
+
+    @Test
+    fun `chatgpt proposal is parsed as needs confirmation with its prompt`() = runBlocking {
+        respond(body = """{"request_id":"p","status":"needs_confirmation","action":null,
+            "message":"Send this prompt to ChatGPT on your laptop?",
+            "data":{"confirm":{"action":"chatgpt_prompt","prompt":"What is DNS?"}},"planner":"rules"}""")
+        val r = (repo().sendCommand("ask chatgpt What is DNS?") as AgentResult.Ok).value
+        assertEquals(CommandStatus.NeedsConfirmation, r.status)
+        assertEquals("What is DNS?", r.chatGptPrompt)
+
+        // A confirmation request the app doesn't know how to show safely is treated as an error.
+        respond(body = """{"request_id":"p","status":"needs_confirmation","message":"?",
+            "data":{"confirm":{"action":"format_disk"}}}""")
+        val odd = (repo().sendCommand("x") as AgentResult.Ok).value
+        assertEquals(CommandStatus.Error, odd.status)
+        assertEquals(null, odd.chatGptPrompt)
+    }
+
+    @Test
+    fun `status exposes telegram recipients and chatgpt availability`() = runBlocking {
+        respond(body = """{"request_id":"s","status":"success","message":"online","data":{"hostname":"PC",
+            "telegram_recipients":["Amma","Me"],"chatgpt_automation":true}}""")
+        val s = (repo().checkStatus() as AgentResult.Ok).value
+        assertEquals(listOf("Amma", "Me"), s.telegramRecipients)
+        assertTrue(s.chatGptAutomation)
     }
 
     @Test

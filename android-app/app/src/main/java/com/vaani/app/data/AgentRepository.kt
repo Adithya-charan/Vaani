@@ -11,8 +11,8 @@ interface AgentRepository {
     suspend fun transcribe(wav: ByteArray, language: String = "unknown"): AgentResult<Transcription> =
         AgentResult.Failed(AgentError.NotConfigured)
 
-    /** Opens a search result on the laptop. Only call after the user confirmed it. */
-    suspend fun openConfirmed(file: FoundFile): AgentResult<CommandResult> =
+    /** Runs an action the user has just confirmed on screen. Never call without that. */
+    suspend fun runConfirmed(confirmation: Confirmation): AgentResult<CommandResult> =
         AgentResult.Failed(AgentError.NotConfigured)
 
     /** Text-to-speech via the laptop (Sarvam Bulbul). Returns WAV bytes. */

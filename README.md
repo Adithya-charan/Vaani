@@ -38,7 +38,7 @@ Requests can be phrased naturally — in **English, Hindi, Telugu, or a mix** �
 |---|---|---|
 | 🛡️ | **Allowlisted actions only** | A short, fixed list of actions; programs start from fixed absolute paths with `shell=False`. |
 | 🌐 | **Web shortcuts** | Open a Google search or the ChatGPT website in the laptop's default browser. |
-| ✅ | **Confirm before opening** | Tap a search result and confirm to open it on the laptop — never from free text. |
+| ✅ | **Confirm before acting** | Opening a file, sending a ChatGPT prompt and sending a file or folder over Telegram all require an explicit confirmation on the phone — never from free text alone. |
 | 🔎 | **Restricted file search** | Approved folders only; names and metadata returned, never file contents. |
 | 🧠 | **Works without AI** | A rule-based parser covers common commands; Groq planning is optional. |
 | 🎙️ | **Multilingual voice** | Sarvam Saaras v4 for speech-to-text, Bulbul v4 Flash for replies. |
@@ -166,7 +166,9 @@ flowchart LR
 | `find_file` | Searches approved folders by name | Names and metadata (size, modified date) only; capped depth, results and time |
 | `get_status` | Reports agent status | Read-only |
 | `web_search` | Opens a Google search in the default browser | Query (any language, ≤ 200 chars) is URL-encoded into a fixed `https://www.google.com/search?q=` URL; never placed on a command line |
-| `open_chatgpt` | Opens `https://chatgpt.com/` in the default browser | Opens the site only; Vaani does not type or submit prompts |
+| `open_chatgpt` | Opens `https://chatgpt.com/` in the default browser | Opens the site only |
+| `ask_chatgpt` → `chatgpt_prompt` | Types a prompt into ChatGPT and presses Send | `ask_chatgpt` (from "ask ChatGPT …" or the planner) **only proposes**: the phone shows the exact prompt and nothing is sent until the user taps **Send**, which posts `chatgpt_prompt` with `confirmed: true`. Runs in Vaani's own Edge profile via Playwright; success is reported only with evidence the prompt was sent |
+| `telegram_send` | Sends a search result to an allowlisted Telegram recipient through your own bot; folders are sent as a ZIP | Confirmed actions only. Recipients come from `TELEGRAM_RECIPIENTS`; the phone picks a name, never a chat id. The item is re-resolved and re-checked like `open_file`; Telegram's 50 MB bot limit applies; the temporary ZIP (links skipped, contents re-checked to stay inside the folder) is always deleted. Success only with Telegram's `message_id` |
 | `open_file` | Opens a file or folder the user picked from search results | **Only** via `POST /actions` with `confirmed: true` after a confirmation dialog on the phone — never produced by the rule parser or the AI planner. Re-resolved at open time: approved folder only, no symlinks/junctions, must still exist and match the selected result's size and date. Documents, media and archives only; programs, scripts, shortcuts and code files are refused |
 
 Approved folders default to **Documents, Desktop and Downloads**, resolved through Windows Known Folders so OneDrive-redirected folders work.
@@ -311,6 +313,8 @@ Type a command, tap a quick-action chip, or tap 🎤, speak, and tap ■ to send
 | `google weather in Hyderabad` / `search the web for python tutorials` | Google search opens in the laptop's browser |
 | `Open ChatGPT` | ChatGPT website opens in the laptop's browser |
 | *Tap a search result → **Open*** | That exact file opens with its default app (or the folder in File Explorer) |
+| `ask ChatGPT what is DNS?` → ***Send*** | The prompt is typed into ChatGPT on the laptop and sent |
+| *Tap a search result → **Send to Amma** → **Send*** | The file (or the folder as a ZIP) is sent to that Telegram recipient |
 | `calculator kholo` / `कैलकुलेटर खोलो` / `కాలిక్యులేటర్ తెరువు` | Calculator opens *(AI planner)* |
 | `delete all files in Documents` | Refused, with an explanation of what Vaani can do |
 
@@ -368,6 +372,25 @@ All agent settings are read from environment variables or `laptop-agent/.env` (s
 | `SARVAM_API_KEY` | — | Enables voice endpoints |
 | `SARVAM_STT_MODEL` | `saaras:v4` | Speech-to-text model |
 | `SARVAM_TTS_MODEL` | `bulbul:v4-flash` | Text-to-speech model |
+| `TELEGRAM_BOT_TOKEN` | — | Token of your own bot from @BotFather; enables sending files |
+| `TELEGRAM_RECIPIENTS` | — | Allowlist `Name=chat_id,Name2=chat_id`. Find ids with `.\scripts\vaani.ps1 telegram-chats` after each person presses **Start** on the bot |
+
+### ChatGPT prompts
+
+Prompt submission drives the installed Microsoft Edge through [Playwright](https://playwright.dev/python/)
+(`playwright` in `requirements.txt`; no separate browser download). It uses a dedicated profile at
+`%LOCALAPPDATA%\Vaani\chatgpt-profile`. Sign in to ChatGPT **yourself** in the window Vaani opens the
+first time; the profile keeps that sign-in like any browser. Vaani never asks for, reads or stores your
+password or cookies. ChatGPT's page changes often — if it does, Vaani reports *"ChatGPT's page
+changed"* rather than guessing.
+
+### Telegram
+
+1. In Telegram, message **@BotFather**, send `/newbot` and follow the steps. Put the token in
+   `laptop-agent\.env` as `TELEGRAM_BOT_TOKEN` (never paste it into chats or commits).
+2. Ask each recipient to open your bot and press **Start**.
+3. Run `.\scripts\vaani.ps1 telegram-chats`, copy the lines you want into `TELEGRAM_RECIPIENTS`,
+   and `.\scripts\vaani.ps1 restart`.
 
 > [!IMPORTANT]
 > Windows Firewall must allow inbound TCP on `VAANI_PORT` for the Python interpreter running the agent, ideally limited to the local subnet and `100.64.0.0/10`.
@@ -406,8 +429,8 @@ cd android-app
 
 | Suite | Coverage |
 |---|---|
-| **Agent** | Authentication, network filter, command parsing, plan validation (including adversarial and malformed AI output), file-search restrictions, web search and ChatGPT URLs, confirmed file opening (traversal, junction escape, duplicates, changed/missing files, blocked file types), voice endpoints, supervisor |
-| **Android** | View-model logic, voice flow, reconnection, confirm-before-open flow, HTTP client (against a mock server), formatting helpers |
+| **Agent** | Authentication, network filter, command parsing, plan validation (including adversarial and malformed AI output), file-search restrictions, web search and ChatGPT URLs, confirmed file opening (traversal, junction escape, duplicates, changed/missing files, blocked file types), ChatGPT proposal/confirmation and "really sent" checks, Telegram sending and folder ZIPs (recipient allowlist, token never exposed, every failure mode, temp cleanup), voice endpoints, supervisor |
+| **Android** | View-model logic, voice flow, reconnection, confirmation flows (open, ChatGPT, Telegram), HTTP client (against a mock server), formatting helpers |
 
 <details>
 <summary><b>Opt-in live planner evaluation</b> (uses API quota)</summary>
@@ -430,8 +453,9 @@ $env:VAANI_LIVE_TESTS = '1'
 - **Locked desktop.** Windows opened while the desktop is locked appear behind the lock screen.
 - **Free-tier rate limits.** Groq's free tier allows roughly 8,000 tokens per minute, so bursts of AI-planned commands can briefly report "rate-limited"; rule-based commands are unaffected.
 - **Voice depends on the laptop.** Sarvam is called from the laptop, and there is no phone-only speech-recognition fallback yet. Replies are spoken in English (en-IN). Recording works only while the app is open, up to 30 seconds; there is no wake word or locked-screen listening.
-- **Intentionally narrow.** Only the actions listed above exist. Files can be opened only after confirming a search result; sending, sharing or deleting files is not supported.
-- **ChatGPT prompts.** Vaani opens the ChatGPT website but does not type or submit prompts.
+- **Intentionally narrow.** Only the actions listed above exist. Files can be opened or sent only after confirming a search result; deleting files is not supported.
+- **ChatGPT automation is fragile by nature.** It depends on chatgpt.com's current page layout and on you being signed in in Vaani's Edge window. The answer appears on the laptop, not on the phone.
+- **Telegram limits.** Bot uploads are limited to 50 MB (folders: the ZIP must fit). Recipients must have pressed **Start** on your bot, and files arrive from the bot, not from your personal account.
 - **Browser actions are unverified.** Vaani confirms the browser was asked to open a page, not that the page loaded or that you are signed in.
 
 ---

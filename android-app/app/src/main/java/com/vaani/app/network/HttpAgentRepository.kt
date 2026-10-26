@@ -7,7 +7,11 @@ import com.vaani.app.data.AgentStatus
 import com.vaani.app.data.CommandResult
 import com.vaani.app.data.CommandStatus
 import com.vaani.app.data.FoundFile
+import com.vaani.app.data.Confirmation
 import com.vaani.app.data.SearchSummary
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import com.vaani.app.data.Transcription
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
@@ -68,15 +72,14 @@ class HttpAgentRepository(
         }
     }
 
-    override suspend fun openConfirmed(file: FoundFile): AgentResult<CommandResult> {
-        val payload = json.encodeToString(
-            OpenFileRequestDto.serializer(),
-            OpenFileRequestDto(
-                action = "open_file", path = file.path, confirmed = true,
-                expectedSize = file.sizeBytes, expectedModified = file.modified,
-            ),
-        )
-        return execute(request("actions").post(payload.toRequestBody(JSON_MEDIA)).build()) { response ->
+    // ChatGPT automation and Telegram uploads (up to 50 MB) take longer than a normal command.
+    private val confirmedClient: OkHttpClient by lazy {
+        client.newBuilder().readTimeout(170, TimeUnit.SECONDS).callTimeout(180, TimeUnit.SECONDS).build()
+    }
+
+    override suspend fun runConfirmed(confirmation: Confirmation): AgentResult<CommandResult> {
+        val payload = confirmationJson(confirmation).toString()
+        return execute(request("actions").post(payload.toRequestBody(JSON_MEDIA)).build(), confirmedClient) { response ->
             json.decodeFromString<CommandResponseDto>(response.string()).toResult()
         }
     }
@@ -96,6 +99,8 @@ class HttpAgentRepository(
                 hostname = r.data?.hostname ?: "laptop",
                 aiPlanner = r.data?.aiPlanner ?: false,
                 approvedFolders = r.data?.approvedFolders.orEmpty(),
+                telegramRecipients = r.data?.telegramRecipients.orEmpty(),
+                chatGptAutomation = r.data?.chatGptAutomation ?: false,
             )
         }
 
@@ -120,10 +125,14 @@ class HttpAgentRepository(
         null
     }
 
-    private suspend fun <T> execute(request: Request, parse: (ResponseBody) -> T): AgentResult<T> =
+    private suspend fun <T> execute(
+        request: Request,
+        http: OkHttpClient = client,
+        parse: (ResponseBody) -> T,
+    ): AgentResult<T> =
         withContext(Dispatchers.IO) {
             val response = try {
-                client.newCall(request).await()
+                http.newCall(request).await()
             } catch (e: InterruptedIOException) {
                 return@withContext AgentResult.Failed(AgentError.Timeout)
             } catch (e: IOException) {
@@ -168,14 +177,34 @@ private data class CommandRequestDto(val command: String)
 @Serializable
 private data class SpeakRequestDto(val text: String, val language: String)
 
-@Serializable
-private data class OpenFileRequestDto(
-    val action: String,
-    val path: String,
-    val confirmed: Boolean,
-    @kotlinx.serialization.SerialName("expected_size") val expectedSize: Long?,
-    @kotlinx.serialization.SerialName("expected_modified") val expectedModified: String?,
-)
+/** Body for POST /actions. `confirmed: true` is only ever sent from a confirmation dialog. */
+internal fun confirmationJson(c: Confirmation): JsonObject = buildJsonObject {
+    fun selected(file: FoundFile) {
+        put("path", file.path)
+        // The laptop refuses the file if it changed since the user picked it.
+        if (!file.isFolder) {
+            file.sizeBytes?.let { put("expected_size", it) }
+            file.modified?.let { put("expected_modified", it) }
+        }
+    }
+    when (c) {
+        is Confirmation.OpenFile -> {
+            put("action", "open_file")
+            selected(c.file)
+        }
+        is Confirmation.AskChatGPT -> {
+            put("action", "chatgpt_prompt")
+            put("prompt", c.prompt)
+        }
+        is Confirmation.SendTelegram -> {
+            put("action", "telegram_send")
+            selected(c.file)
+            put("recipient", c.recipient)
+            put("as_zip", c.file.isFolder)
+        }
+    }
+    put("confirmed", true)
+}
 
 @Serializable
 private data class TranscriptDto(
@@ -193,10 +222,16 @@ private data class FoundFileDto(
 )
 
 @Serializable
+private data class ConfirmDto(val action: String? = null, val prompt: String? = null)
+
+@Serializable
 private data class ResponseDataDto(
     val hostname: String? = null,
     @kotlinx.serialization.SerialName("ai_planner") val aiPlanner: Boolean? = null,
     @kotlinx.serialization.SerialName("approved_folders") val approvedFolders: List<String>? = null,
+    @kotlinx.serialization.SerialName("telegram_recipients") val telegramRecipients: List<String>? = null,
+    @kotlinx.serialization.SerialName("chatgpt_automation") val chatGptAutomation: Boolean? = null,
+    val confirm: ConfirmDto? = null,
     val results: List<FoundFileDto>? = null,
     @kotlinx.serialization.SerialName("total_matches") val totalMatches: Int? = null,
     val truncated: Boolean? = null,
@@ -219,8 +254,12 @@ private data class CommandResponseDto(
             "not_found" -> CommandStatus.NotFound
             "rejected" -> CommandStatus.Rejected
             "needs_clarification" -> CommandStatus.NeedsClarification
+            // Only a ChatGPT proposal with its prompt counts; anything else can't be confirmed safely.
+            "needs_confirmation" -> if (data?.confirm?.action == "chatgpt_prompt" && !data.confirm.prompt.isNullOrBlank())
+                CommandStatus.NeedsConfirmation else CommandStatus.Error
             else -> CommandStatus.Error
         },
+        chatGptPrompt = data?.confirm?.takeIf { status == "needs_confirmation" && it.action == "chatgpt_prompt" }?.prompt,
         action = action,
         message = message,
         files = data?.results.orEmpty().map {

@@ -9,6 +9,8 @@ import com.vaani.app.data.AgentError
 import com.vaani.app.data.AgentRepository
 import com.vaani.app.data.AgentResult
 import com.vaani.app.data.CommandResult
+import com.vaani.app.data.CommandStatus
+import com.vaani.app.data.Confirmation
 import com.vaani.app.data.FoundFile
 import com.vaani.app.data.MemoryVoicePrefs
 import com.vaani.app.data.VoicePrefs
@@ -68,8 +70,12 @@ data class HomeUiState(
     val voice: VoiceState = VoiceState.Idle,
     val muted: Boolean = false,
     val speaking: Boolean = false,
-    /** Search result waiting for the user to confirm opening it on the laptop. */
-    val pendingOpen: FoundFile? = null,
+    /** Search result whose options (open / send) are being shown. */
+    val fileChoice: FoundFile? = null,
+    /** Action shown in the confirmation dialog; nothing runs until the user confirms it. */
+    val pendingConfirm: Confirmation? = null,
+    /** Telegram recipients configured on the laptop (names only). */
+    val telegramRecipients: List<String> = emptyList(),
 ) {
     val isSending: Boolean get() = exchanges.lastOrNull()?.reply == Reply.Pending
     val isBusy: Boolean get() = isSending || voice != VoiceState.Idle
@@ -100,11 +106,13 @@ class HomeViewModel(
     fun refreshConnection() {
         _state.update { it.copy(connection = ConnectionState.Checking) }
         viewModelScope.launch {
-            val connection = when (val r = repository.checkStatus()) {
-                is AgentResult.Ok -> ConnectionState.Connected(r.value.hostname)
-                is AgentResult.Failed -> ConnectionState.Disconnected(r.error)
+            when (val r = repository.checkStatus()) {
+                is AgentResult.Ok -> _state.update {
+                    it.copy(connection = ConnectionState.Connected(r.value.hostname),
+                        telegramRecipients = r.value.telegramRecipients)
+                }
+                is AgentResult.Failed -> _state.update { it.copy(connection = ConnectionState.Disconnected(r.error)) }
             }
-            _state.update { it.copy(connection = connection) }
         }
     }
 
@@ -291,23 +299,45 @@ class HomeViewModel(
 
     // --- commands -------------------------------------------------------------------
 
-    // --- opening a search result (needs explicit confirmation) ----------------------------
+    // --- confirmed actions: open / send a search result, ChatGPT prompts -------------------
 
     fun onResultTapped(file: FoundFile) {
         if (_state.value.isBusy) return
-        _state.update { it.copy(pendingOpen = file) }
+        // With no Telegram recipients, opening is the only option: go straight to its confirmation.
+        if (_state.value.telegramRecipients.isEmpty()) {
+            _state.update { it.copy(pendingConfirm = Confirmation.OpenFile(file)) }
+        } else {
+            _state.update { it.copy(fileChoice = file) }
+        }
     }
 
-    fun onDismissOpen() {
-        _state.update { it.copy(pendingOpen = null) }
+    fun onChooseOpen() {
+        val file = _state.value.fileChoice ?: return
+        _state.update { it.copy(fileChoice = null, pendingConfirm = Confirmation.OpenFile(file)) }
     }
 
-    /** Sends exactly the file shown in the dialog; nothing is opened without this call. */
-    fun onConfirmOpen() {
-        val file = _state.value.pendingOpen ?: return
-        _state.update { it.copy(pendingOpen = null) }
+    fun onChooseTelegram(recipient: String) {
+        val file = _state.value.fileChoice ?: return
+        if (recipient !in _state.value.telegramRecipients) return
+        _state.update { it.copy(fileChoice = null, pendingConfirm = Confirmation.SendTelegram(file, recipient)) }
+    }
+
+    fun onDismissConfirm() {
+        _state.update { it.copy(fileChoice = null, pendingConfirm = null) }
+    }
+
+    /** Runs exactly what the dialog showed; nothing leaves the phone without this call. */
+    fun onConfirm() {
+        val confirmation = _state.value.pendingConfirm ?: return
+        _state.update { it.copy(pendingConfirm = null) }
         if (_state.value.isBusy) return
-        submit("Open ${file.name}", viaVoice = false) { repository.openConfirmed(file) }
+        val label = when (confirmation) {
+            is Confirmation.OpenFile -> "Open ${confirmation.file.name}"
+            is Confirmation.AskChatGPT -> "Send to ChatGPT: “${confirmation.prompt}”"
+            is Confirmation.SendTelegram ->
+                "Send ${confirmation.file.name}${if (confirmation.file.isFolder) " (ZIP)" else ""} to ${confirmation.recipient}"
+        }
+        submit(label, viaVoice = false) { repository.runConfirmed(confirmation) }
     }
 
     private fun submit(
@@ -328,6 +358,10 @@ class HomeViewModel(
                 }
                 setReply(id, reply)
                 updateConnectionFrom(reply)
+                // The laptop proposed a ChatGPT prompt: show it for confirmation; nothing is sent yet.
+                (reply as? Reply.Answered)?.result?.chatGptPrompt
+                    ?.takeIf { reply.result.status == CommandStatus.NeedsConfirmation }
+                    ?.let { prompt -> _state.update { it.copy(pendingConfirm = Confirmation.AskChatGPT(prompt)) } }
                 if (viaVoice) {
                     when (reply) {
                         is Reply.Answered -> speak(SpokenReply.of(reply.result))
