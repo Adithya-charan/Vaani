@@ -68,6 +68,19 @@ class HttpAgentRepository(
         }
     }
 
+    override suspend fun openConfirmed(file: FoundFile): AgentResult<CommandResult> {
+        val payload = json.encodeToString(
+            OpenFileRequestDto.serializer(),
+            OpenFileRequestDto(
+                action = "open_file", path = file.path, confirmed = true,
+                expectedSize = file.sizeBytes, expectedModified = file.modified,
+            ),
+        )
+        return execute(request("actions").post(payload.toRequestBody(JSON_MEDIA)).build()) { response ->
+            json.decodeFromString<CommandResponseDto>(response.string()).toResult()
+        }
+    }
+
     override suspend fun speak(text: String, language: String): AgentResult<ByteArray> {
         val payload = json.encodeToString(SpeakRequestDto.serializer(), SpeakRequestDto(text.take(500), language))
         return execute(request("voice", "speak").post(payload.toRequestBody(JSON_MEDIA)).build()) { response ->
@@ -154,6 +167,15 @@ private data class CommandRequestDto(val command: String)
 
 @Serializable
 private data class SpeakRequestDto(val text: String, val language: String)
+
+@Serializable
+private data class OpenFileRequestDto(
+    val action: String,
+    val path: String,
+    val confirmed: Boolean,
+    @kotlinx.serialization.SerialName("expected_size") val expectedSize: Long?,
+    @kotlinx.serialization.SerialName("expected_modified") val expectedModified: String?,
+)
 
 @Serializable
 private data class TranscriptDto(

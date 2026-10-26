@@ -1,6 +1,8 @@
 package com.vaani.app.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.IconButtonDefaults
@@ -79,6 +81,7 @@ import com.vaani.app.viewmodel.Reply
 private val QUICK_COMMANDS = listOf(
     "Open Calculator",
     "Find latest PDF in Downloads",
+    "Open ChatGPT",
     "Open Notepad",
     "Open File Explorer",
     "Is my laptop connected?",
@@ -98,8 +101,12 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     onToggleMute: () -> Unit = {},
     micLevel: Float = 0f,
+    onOpenResult: (FoundFile) -> Unit = {},
+    onConfirmOpen: () -> Unit = {},
+    onDismissOpen: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
+    state.pendingOpen?.let { OpenConfirmDialog(it, onConfirmOpen, onDismissOpen) }
     LaunchedEffect(state.notice) {
         state.notice?.let {
             snackbar.showSnackbar(it)
@@ -145,7 +152,7 @@ fun HomeScreen(
             } else {
                 Spacer(Modifier.size(4.dp))
             }
-            Conversation(state.exchanges, Modifier.weight(1f))
+            Conversation(state.exchanges, onOpenResult.takeUnless { state.isBusy }, Modifier.weight(1f))
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -188,7 +195,7 @@ private fun ConnectionChip(connection: ConnectionState, onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun Conversation(exchanges: List<Exchange>, modifier: Modifier = Modifier) {
+private fun Conversation(exchanges: List<Exchange>, onOpen: ((FoundFile) -> Unit)?, modifier: Modifier = Modifier) {
     if (exchanges.isEmpty()) {
         EmptyState(modifier)
         return
@@ -203,7 +210,7 @@ private fun Conversation(exchanges: List<Exchange>, modifier: Modifier = Modifie
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(exchanges, key = { it.id }) { ExchangeItem(it) }
+        items(exchanges, key = { it.id }) { ExchangeItem(it, onOpen) }
     }
 }
 
@@ -228,7 +235,7 @@ private fun EmptyState(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ExchangeItem(exchange: Exchange) {
+private fun ExchangeItem(exchange: Exchange, onOpen: ((FoundFile) -> Unit)?) {
     Column(Modifier.fillMaxWidth()) {
         Surface(
             color = MaterialTheme.colorScheme.primaryContainer,
@@ -252,14 +259,41 @@ private fun ExchangeItem(exchange: Exchange) {
             }
         }
         Spacer(Modifier.size(6.dp))
-        ReplyBubble(exchange.reply, Modifier.align(Alignment.Start))
+        ReplyBubble(exchange.reply, onOpen, Modifier.align(Alignment.Start))
     }
 }
 
 private data class Tone(val label: String, val color: Color)
 
 @Composable
-private fun ReplyBubble(reply: Reply, modifier: Modifier = Modifier) {
+private fun OpenConfirmDialog(file: FoundFile, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val details = listOfNotNull(FileFormat.size(file.sizeBytes), FileFormat.modified(file.modified)).joinToString(" · ")
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (file.isFolder) "Open this folder on your laptop?" else "Open this file on your laptop?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(file.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                // Full path so duplicates with the same name can be told apart.
+                Text(file.path.replace("/", " › "), style = MaterialTheme.typography.bodyMedium)
+                if (details.isNotEmpty()) {
+                    Text(details, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(
+                    if (file.isFolder) "It opens in File Explorer on the laptop."
+                    else "It opens with its default app on the laptop's screen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Open") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun ReplyBubble(reply: Reply, onOpen: ((FoundFile) -> Unit)?, modifier: Modifier = Modifier) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp),
@@ -280,14 +314,14 @@ private fun ReplyBubble(reply: Reply, modifier: Modifier = Modifier) {
                     StatusLabel(Tone("Couldn't send", MaterialTheme.colorScheme.error))
                     Text(reply.error.userMessage())
                 }
-                is Reply.Answered -> ResultContent(reply.result)
+                is Reply.Answered -> ResultContent(reply.result, onOpen)
             }
         }
     }
 }
 
 @Composable
-private fun ResultContent(result: CommandResult) {
+private fun ResultContent(result: CommandResult, onOpen: ((FoundFile) -> Unit)?) {
     val tone = when (result.status) {
         CommandStatus.Success -> Tone("Done", StatusColors.connected)
         CommandStatus.NotFound -> Tone("Not found", MaterialTheme.colorScheme.onSurfaceVariant)
@@ -297,7 +331,7 @@ private fun ResultContent(result: CommandResult) {
     }
     StatusLabel(tone)
     if (result.files.isNotEmpty()) {
-        SearchResults(result.files, result.search, key = result.requestId)
+        SearchResults(result.files, result.search, key = result.requestId, onOpen = onOpen)
     } else {
         Text(result.message)
         result.search?.let { s ->

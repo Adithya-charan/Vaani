@@ -106,6 +106,9 @@ class MainActivity : ComponentActivity() {
                             showSettings = true
                         },
                         onToggleMute = home::onToggleMute,
+                        onOpenResult = home::onResultTapped,
+                        onConfirmOpen = home::onConfirmOpen,
+                        onDismissOpen = home::onDismissOpen,
                         micLevel = micLevel?.value ?: 0f,
                     )
                 }

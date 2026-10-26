@@ -9,6 +9,7 @@ import com.vaani.app.data.AgentError
 import com.vaani.app.data.AgentRepository
 import com.vaani.app.data.AgentResult
 import com.vaani.app.data.CommandResult
+import com.vaani.app.data.FoundFile
 import com.vaani.app.data.MemoryVoicePrefs
 import com.vaani.app.data.VoicePrefs
 import com.vaani.app.speech.MAX_RECORDING_MS
@@ -67,6 +68,8 @@ data class HomeUiState(
     val voice: VoiceState = VoiceState.Idle,
     val muted: Boolean = false,
     val speaking: Boolean = false,
+    /** Search result waiting for the user to confirm opening it on the laptop. */
+    val pendingOpen: FoundFile? = null,
 ) {
     val isSending: Boolean get() = exchanges.lastOrNull()?.reply == Reply.Pending
     val isBusy: Boolean get() = isSending || voice != VoiceState.Idle
@@ -288,7 +291,30 @@ class HomeViewModel(
 
     // --- commands -------------------------------------------------------------------
 
-    private fun submit(command: String, viaVoice: Boolean) {
+    // --- opening a search result (needs explicit confirmation) ----------------------------
+
+    fun onResultTapped(file: FoundFile) {
+        if (_state.value.isBusy) return
+        _state.update { it.copy(pendingOpen = file) }
+    }
+
+    fun onDismissOpen() {
+        _state.update { it.copy(pendingOpen = null) }
+    }
+
+    /** Sends exactly the file shown in the dialog; nothing is opened without this call. */
+    fun onConfirmOpen() {
+        val file = _state.value.pendingOpen ?: return
+        _state.update { it.copy(pendingOpen = null) }
+        if (_state.value.isBusy) return
+        submit("Open ${file.name}", viaVoice = false) { repository.openConfirmed(file) }
+    }
+
+    private fun submit(
+        command: String,
+        viaVoice: Boolean,
+        call: suspend () -> AgentResult<CommandResult> = { repository.sendCommand(command) },
+    ) {
         stopSpeaking()
         val id = nextId++
         _state.update {
@@ -296,7 +322,7 @@ class HomeViewModel(
         }
         sendJob = viewModelScope.launch {
             try {
-                val reply = when (val r = repository.sendCommand(command)) {
+                val reply = when (val r = call()) {
                     is AgentResult.Ok -> Reply.Answered(r.value)
                     is AgentResult.Failed -> Reply.Failed(r.error)
                 }

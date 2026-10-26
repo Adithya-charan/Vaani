@@ -36,7 +36,9 @@ Requests can be phrased naturally — in **English, Hindi, Telugu, or a mix** �
 
 | | Capability | What it means |
 |---|---|---|
-| 🛡️ | **Allowlisted actions only** | Five actions, started from fixed absolute paths with `shell=False`. |
+| 🛡️ | **Allowlisted actions only** | A short, fixed list of actions; programs start from fixed absolute paths with `shell=False`. |
+| 🌐 | **Web shortcuts** | Open a Google search or the ChatGPT website in the laptop's default browser. |
+| ✅ | **Confirm before opening** | Tap a search result and confirm to open it on the laptop — never from free text. |
 | 🔎 | **Restricted file search** | Approved folders only; names and metadata returned, never file contents. |
 | 🧠 | **Works without AI** | A rule-based parser covers common commands; Groq planning is optional. |
 | 🎙️ | **Multilingual voice** | Sarvam Saaras v4 for speech-to-text, Bulbul v4 Flash for replies. |
@@ -163,8 +165,13 @@ flowchart LR
 | `open_explorer` | Opens File Explorer | Fixed absolute path |
 | `find_file` | Searches approved folders by name | Names and metadata (size, modified date) only; capped depth, results and time |
 | `get_status` | Reports agent status | Read-only |
+| `web_search` | Opens a Google search in the default browser | Query (any language, ≤ 200 chars) is URL-encoded into a fixed `https://www.google.com/search?q=` URL; never placed on a command line |
+| `open_chatgpt` | Opens `https://chatgpt.com/` in the default browser | Opens the site only; Vaani does not type or submit prompts |
+| `open_file` | Opens a file or folder the user picked from search results | **Only** via `POST /actions` with `confirmed: true` after a confirmation dialog on the phone — never produced by the rule parser or the AI planner. Re-resolved at open time: approved folder only, no symlinks/junctions, must still exist and match the selected result's size and date. Documents, media and archives only; programs, scripts, shortcuts and code files are refused |
 
 Approved folders default to **Documents, Desktop and Downloads**, resolved through Windows Known Folders so OneDrive-redirected folders work.
+
+For browser actions the agent reports that it *asked* the browser to open the page (`page_load_verified: false`); it cannot see whether the page finished loading.
 
 ---
 
@@ -301,6 +308,9 @@ Type a command, tap a quick-action chip, or tap 🎤, speak, and tap ■ to send
 | `Find my resume in Desktop` | Matching files and folders from Desktop, with size and date |
 | `find the latest pdf in downloads` | PDFs in Downloads, newest first |
 | `Is my laptop connected?` | Agent status |
+| `google weather in Hyderabad` / `search the web for python tutorials` | Google search opens in the laptop's browser |
+| `Open ChatGPT` | ChatGPT website opens in the laptop's browser |
+| *Tap a search result → **Open*** | That exact file opens with its default app (or the folder in File Explorer) |
 | `calculator kholo` / `कैलकुलेटर खोलो` / `కాలిక్యులేటర్ తెరువు` | Calculator opens *(AI planner)* |
 | `delete all files in Documents` | Refused, with an explanation of what Vaani can do |
 
@@ -313,6 +323,7 @@ Type a command, tap a quick-action chip, or tap 🎤, speak, and tap ■ to send
 | `GET` | `/health` | None | Liveness only |
 | `GET` | `/status` | Bearer | Agent version, hostname, AI/voice availability, approved folders |
 | `POST` | `/commands` | Bearer | `{"command": "open calculator"}` |
+| `POST` | `/actions` | Bearer | Confirmed structured actions, e.g. `{"action": "open_file", "path": "Desktop/notes.pdf", "confirmed": true, "expected_size": 1234, "expected_modified": "…"}` |
 | `POST` | `/voice/transcribe` | Bearer | Multipart `file` (WAV, ≤ 2 MB) and optional `language` |
 | `POST` | `/voice/speak` | Bearer | `{"text": "...", "language": "en-IN"}` → `audio/wav` |
 
@@ -395,8 +406,8 @@ cd android-app
 
 | Suite | Coverage |
 |---|---|
-| **Agent** | Authentication, network filter, command parsing, plan validation (including adversarial and malformed AI output), file-search restrictions, voice endpoints, supervisor |
-| **Android** | View-model logic, voice flow, reconnection, HTTP client (against a mock server), formatting helpers |
+| **Agent** | Authentication, network filter, command parsing, plan validation (including adversarial and malformed AI output), file-search restrictions, web search and ChatGPT URLs, confirmed file opening (traversal, junction escape, duplicates, changed/missing files, blocked file types), voice endpoints, supervisor |
+| **Android** | View-model logic, voice flow, reconnection, confirm-before-open flow, HTTP client (against a mock server), formatting helpers |
 
 <details>
 <summary><b>Opt-in live planner evaluation</b> (uses API quota)</summary>
@@ -419,7 +430,9 @@ $env:VAANI_LIVE_TESTS = '1'
 - **Locked desktop.** Windows opened while the desktop is locked appear behind the lock screen.
 - **Free-tier rate limits.** Groq's free tier allows roughly 8,000 tokens per minute, so bursts of AI-planned commands can briefly report "rate-limited"; rule-based commands are unaffected.
 - **Voice depends on the laptop.** Sarvam is called from the laptop, and there is no phone-only speech-recognition fallback yet. Replies are spoken in English (en-IN). Recording works only while the app is open, up to 30 seconds; there is no wake word or locked-screen listening.
-- **Intentionally narrow.** Only the actions listed above exist. Opening, sending or deleting files is deliberately unsupported.
+- **Intentionally narrow.** Only the actions listed above exist. Files can be opened only after confirming a search result; sending, sharing or deleting files is not supported.
+- **ChatGPT prompts.** Vaani opens the ChatGPT website but does not type or submit prompts.
+- **Browser actions are unverified.** Vaani confirms the browser was asked to open a page, not that the page loaded or that you are signed in.
 
 ---
 

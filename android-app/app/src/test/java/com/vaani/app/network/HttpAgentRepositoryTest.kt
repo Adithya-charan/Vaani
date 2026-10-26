@@ -167,6 +167,25 @@ class HttpAgentRepositoryTest {
     }
 
     @Test
+    fun `open confirmed posts the exact selected result to actions`() = runBlocking {
+        respond(body = """{"request_id":"o","status":"success","action":"open_file",
+            "message":"Opening my resume.pdf on your laptop.","data":{"path":"Desktop/B TECH/my resume.pdf","type":"file"},
+            "planner":"confirmed"}""")
+        val file = com.vaani.app.data.FoundFile("my resume.pdf", "Desktop/B TECH/my resume.pdf", false, 199_000,
+            "2025-02-04T10:00:00+00:00")
+        val r = (repo().openConfirmed(file) as AgentResult.Ok).value
+        assertEquals(CommandStatus.Success, r.status)
+        val req = server.takeRequest()
+        assertEquals("/actions", req.url.encodedPath)
+        assertEquals("Bearer $TOKEN", req.headers["Authorization"])
+        assertEquals(
+            """{"action":"open_file","path":"Desktop/B TECH/my resume.pdf","confirmed":true,""" +
+                """"expected_size":199000,"expected_modified":"2025-02-04T10:00:00+00:00"}""",
+            req.body!!.utf8(),
+        )
+    }
+
+    @Test
     fun `connections are not kept idle for reuse`() = runBlocking {
         val client = defaultHttpClient()
         respond(body = """{"request_id":"s","status":"success","message":"ok","data":{"hostname":"PC"}}""")

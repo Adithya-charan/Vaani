@@ -2,6 +2,8 @@ package com.vaani.app.ui
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,12 +45,24 @@ import com.vaani.app.ui.theme.VaaniTheme
 private const val COLLAPSED_COUNT = 4
 
 @Composable
-fun SearchResults(files: List<FoundFile>, summary: SearchSummary?, key: String) {
+fun SearchResults(
+    files: List<FoundFile>,
+    summary: SearchSummary?,
+    key: String,
+    onOpen: ((FoundFile) -> Unit)? = null,
+) {
     var expanded by rememberSaveable(key) { mutableStateOf(false) }
     val visible = if (expanded) files else files.take(COLLAPSED_COUNT)
 
     Column(Modifier.fillMaxWidth().animateContentSize()) {
         summary?.let { SummaryLine(it, files.size) }
+        if (onOpen != null) {
+            Text(
+                "Tap a result to open it on your laptop.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         Spacer(Modifier.size(8.dp))
         Surface(
             shape = RoundedCornerShape(14.dp),
@@ -58,7 +72,7 @@ fun SearchResults(files: List<FoundFile>, summary: SearchSummary?, key: String) 
             Column {
                 visible.forEachIndexed { i, file ->
                     if (i > 0) HorizontalDivider(Modifier.padding(start = 60.dp), thickness = 0.5.dp)
-                    FileRow(file)
+                    FileRow(file, onOpen)
                 }
             }
         }
@@ -86,7 +100,7 @@ private fun SummaryLine(summary: SearchSummary, shown: Int) {
 }
 
 @Composable
-private fun FileRow(file: FoundFile) {
+private fun FileRow(file: FoundFile, onOpen: ((FoundFile) -> Unit)?) {
     val details = listOfNotNull(
         FileFormat.size(file.sizeBytes),
         FileFormat.modified(file.modified),
@@ -95,6 +109,10 @@ private fun FileRow(file: FoundFile) {
     Row(
         Modifier
             .fillMaxWidth()
+            .then(
+                if (onOpen != null) Modifier.clickable(onClickLabel = "open on laptop", role = Role.Button) { onOpen(file) }
+                else Modifier
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp)
             .semantics(mergeDescendants = true) {
                 contentDescription = buildString {
